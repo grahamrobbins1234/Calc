@@ -8,7 +8,7 @@ import threading
 import numpy as np
 
 from tiremote.encoder import apply_move, unpacketize
-from tiremote.protocol import (LCD_H, LCD_W, MSG_ACK, MSG_BYE, MSG_CURSOR, MSG_FRAME, MSG_HELLO,
+from tiremote.protocol import (LCD_H, LCD_W, MSG_ACK, MSG_BYE, MSG_FRAME, MSG_HELLO,
                                MSG_KEYS, MSG_MODE, MSG_PALETTE, OP_END, OP_LIT, OP_MOVE, OP_RUN,
                                PROTO_VERSION)
 
@@ -75,9 +75,12 @@ class FakeCalc:
 
     def _get(self, count):
         while len(self._plain) < count:
-            self._plain += unpacketize(self._raw)
+            self._plain += unpacketize(self._raw, self._on_cursor)
         data, self._plain = self._plain[:count], self._plain[count:]
         return data
+
+    def _on_cursor(self, spot):
+        self.cursor = spot
 
     def _frame(self):
         stride = LCD_W * self.bpp // 8
@@ -119,8 +122,6 @@ class FakeCalc:
                     self.frames += 1
                     if self.auto_ack:
                         self.ack()
-                elif kind == MSG_CURSOR:
-                    self.cursor = struct.unpack("<HB", self._get(3))
                 else:
                     raise AssertionError("unknown message %r" % kind)
         except _Stopped:

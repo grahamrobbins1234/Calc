@@ -152,9 +152,11 @@ To change any of this, edit the two dictionaries at the top of
   LZ4-compressed when that makes it smaller. The packet buffers live in the
   unused half of the calculator's video memory.
 - **Pointer:** the calculator draws the mouse pointer itself. The host sends
-  its position as a 4-byte message whenever it moves, independent of frames,
-  so moving the mouse costs no picture data.
-- **Input:** the calculator sends its 7-byte key matrix whenever it changes.
+  its position as a tiny out-of-band packet whenever it moves. These may
+  arrive between the chunks of a large frame and are acted on at once, so
+  the pointer keeps moving while a big update is still coming in.
+- **Input:** the calculator scans its keys every 5 ms, even while picture
+  data is pouring in, and sends its 7-byte key matrix whenever it changes.
   Pointer acceleration, key repeat, layers and zoom all live in the host.
 
 Measured on a real browser window being scrolled (1:2 zoom, average bytes

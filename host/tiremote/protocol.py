@@ -14,7 +14,6 @@ FRAME_WINDOW = 2  # frames the host may have sent but not yet acknowledged
 MSG_MODE = ord("M")  # + 1 byte bits per pixel
 MSG_PALETTE = ord("P")  # + 1 byte count (0 = 256) + count * 2 bytes
 MSG_FRAME = ord("F")  # + ops, OP_END terminated
-MSG_CURSOR = ord("C")  # + u16 x + u8 y
 
 CURSOR_HIDDEN = 0xFF
 
@@ -25,6 +24,7 @@ OP_END = 0xC0
 OP_MOVE = 0xC1  # + u16 xb + u8 y + u16 wb + u8 h + s8 dx + s8 dy
 
 PKT_LZ4 = 0x8000
+PKT_OOB = 0x4000  # out-of-band pointer position: u16 x + u8 y
 PKT_MAX = 8192
 
 KEY_GROUPS = 7

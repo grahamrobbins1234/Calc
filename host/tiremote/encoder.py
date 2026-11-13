@@ -10,7 +10,8 @@ import struct
 
 import lz4.block as lz4_block
 
-from .protocol import (MSG_FRAME, OP_END, OP_LIT, OP_MOVE, OP_RUN, OP_SKIP, PKT_LZ4, PKT_MAX)
+from .protocol import (MSG_FRAME, OP_END, OP_LIT, OP_MOVE, OP_RUN, OP_SKIP, PKT_LZ4, PKT_MAX,
+                       PKT_OOB)
 
 MIN_SKIP = 4  # unchanged gaps shorter than this are cheaper to resend
 MIN_RUN = 4  # equal-colour runs shorter than this are cheaper as literals
@@ -114,7 +115,7 @@ def encode_frame(new, old=None, prefix=b""):
     return body[:1] + prefix + body[1:]
 
 
-def packetize(data, lz4=True):
+def packets(data, lz4=True):
     """Wrap host -> calculator bytes in packets, LZ4-compressing where it pays."""
     out = []
     for start in range(0, len(data), PKT_MAX):
@@ -125,12 +126,30 @@ def packetize(data, lz4=True):
                 out.append(struct.pack("<HH", len(packed) | PKT_LZ4, len(chunk)) + packed)
                 continue
         out.append(struct.pack("<H", len(chunk)) + chunk)
-    return b"".join(out)
+    return out
 
 
-def unpacketize(read):
-    """Reference packet reader. `read(n)` returns exactly n bytes. Returns one payload."""
-    (n,) = struct.unpack("<H", read(2))
+def packetize(data, lz4=True):
+    return b"".join(packets(data, lz4))
+
+
+def cursor_packet(x, y):
+    """Out-of-band pointer position: may be sent between any two packets."""
+    return struct.pack("<HHB", 3 | PKT_OOB, x, y)
+
+
+def unpacketize(read, on_cursor=None):
+    """Reference packet reader. `read(n)` returns exactly n bytes. Returns the
+    next payload, passing any pointer positions met on the way to `on_cursor`."""
+    while True:
+        (n,) = struct.unpack("<H", read(2))
+        if not n & PKT_OOB:
+            break
+        if n != 3 | PKT_OOB:
+            raise ValueError("bad out-of-band packet")
+        spot = struct.unpack("<HB", read(3))
+        if on_cursor:
+            on_cursor(spot)
     if n & PKT_LZ4:
         (size,) = struct.unpack("<H", read(2))
         n &= ~PKT_LZ4

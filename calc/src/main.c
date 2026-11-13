@@ -147,6 +147,12 @@ static bool rx_exact(uint8_t *dst, unsigned int len) {
     while (len) {
         int n;
 
+        /* Keys come first: scan on schedule even while data is pouring in. */
+        if (clock() - last_key_scan >= KEY_INTERVAL) {
+            poll_keys();
+            if (quit) return false;
+        }
+
         usb_HandleEvents();
         if (!has_srl) return false;
 
@@ -159,14 +165,9 @@ static bool rx_exact(uint8_t *dst, unsigned int len) {
             dst += n;
             len -= n;
             last = clock();
-            continue;
+        } else if (clock() - last > RX_TIMEOUT) {
+            return false;
         }
-
-        if (clock() - last_key_scan >= KEY_INTERVAL) {
-            poll_keys();
-            if (quit) return false;
-        }
-        if (clock() - last > RX_TIMEOUT) return false;
     }
     return true;
 }
@@ -225,17 +226,26 @@ static void pointer_show(void) {
     if (cursor_y != CURSOR_HIDDEN) cursor_show(&cursor, FB, bpp, cursor_x, cursor_y);
 }
 
+/* The host moved the pointer. Arrives out-of-band, possibly in the middle of a frame. */
+static void pointer_moved(const uint8_t *note) {
+    cursor_x = note[0] | ((unsigned int)note[1] << 8);
+    cursor_y = note[2];
+    pointer_hide();
+    pointer_show();
+    rd_retouch = true; /* lift it again before the frame draws anything more */
+}
+
 /* Handle host messages until one fails. Returns only on error, timeout or quit. */
 static void serve(void) {
     rd_stream_t s;
     uint8_t hello[2] = {MSG_HELLO, PROTO_VERSION};
 
-    pk_init(&s, rx_exact, PKT_WIRE, PKT_PLAIN);
+    pk_init(&s, rx_exact, pointer_moved, PKT_WIRE, PKT_PLAIN);
     cursor_y = CURSOR_HIDDEN;
     tx(hello, sizeof hello);
 
     for (;;) {
-        uint8_t type, arg[3];
+        uint8_t type, arg[1];
         unsigned int count;
 
         if (!rd_read(&s, &type, 1)) return;
@@ -264,14 +274,6 @@ static void serve(void) {
                 return;
             pointer_show();
             tx_byte(MSG_ACK);
-            break;
-
-        case MSG_CURSOR:
-            if (!rd_read(&s, arg, 3)) return;
-            cursor_x = arg[0] | ((unsigned int)arg[1] << 8);
-            cursor_y = arg[2];
-            pointer_hide();
-            pointer_show();
             break;
 
         default:

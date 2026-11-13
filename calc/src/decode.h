@@ -35,23 +35,29 @@ bool rd_read(rd_stream_t *s, uint8_t *dst, unsigned int len);
 /*
  * Decode one frame (everything after the MSG_FRAME byte) into `fb`.
  * `stride` is the number of framebuffer bytes per screen row.
- * `touch`, if not NULL, is called once before the first change to `fb`
- * (and not at all for an empty frame).
+ * `touch`, if not NULL, is called before the first change to `fb` (not at
+ * all for an empty frame), and again before the next change whenever
+ * something sets rd_retouch in the meantime.
  * Returns false if the stream ran dry or the data is invalid.
  */
 bool rd_decode_frame(rd_stream_t *s, uint8_t *fb, unsigned int fb_size, unsigned int stride,
                      void (*touch)(void));
+
+extern bool rd_retouch;
 
 /* ---- packets ---------------------------------------------------------- */
 
 /* Reads exactly `len` raw bytes from the link, or returns false. */
 typedef bool (*pk_read_fn)(uint8_t *dst, unsigned int len);
 
+/* Receives the PKT_OOB_LEN bytes of an out-of-band packet as soon as it arrives. */
+typedef void (*pk_oob_fn)(const uint8_t *note);
+
 /*
  * Make `s` a stream of packet payloads. `wire` and `plain` are scratch
  * buffers of PKT_MAX bytes each. One packet stream at a time.
  */
-void pk_init(rd_stream_t *s, pk_read_fn read, uint8_t *wire, uint8_t *plain);
+void pk_init(rd_stream_t *s, pk_read_fn read, pk_oob_fn oob, uint8_t *wire, uint8_t *plain);
 
 /* Decompress one LZ4 block that must expand to exactly `dst_len` bytes. */
 bool lz4_decode(const uint8_t *src, unsigned int src_len, uint8_t *dst, unsigned int dst_len);

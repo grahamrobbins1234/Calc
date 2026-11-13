@@ -34,9 +34,17 @@ static void pointer_show(void) {
     if (cursor_y != CURSOR_HIDDEN) cursor_show(&cursor, fb, bpp, cursor_x, cursor_y);
 }
 
+static void pointer_moved(const uint8_t *note) {
+    cursor_x = note[0] | ((unsigned int)note[1] << 8);
+    cursor_y = note[2];
+    pointer_hide();
+    pointer_show();
+    rd_retouch = true;
+}
+
 static bool serve(rd_stream_t *s) {
     for (;;) {
-        uint8_t type, arg[3], palette[512];
+        uint8_t type, arg[1], palette[512];
         unsigned int count;
 
         at_eof = 0;
@@ -60,13 +68,6 @@ static bool serve(rd_stream_t *s) {
                 return false;
             pointer_show();
             break;
-        case MSG_CURSOR:
-            if (!rd_read(s, arg, 3)) return false;
-            cursor_x = arg[0] | ((unsigned int)arg[1] << 8);
-            cursor_y = arg[2];
-            pointer_hide();
-            pointer_show();
-            break;
         default:
             return false;
         }
@@ -79,7 +80,7 @@ int main(void) {
     uint8_t head[4];
 
     memset(fb, 0xA5, sizeof fb); /* video memory starts with leftovers */
-    pk_init(&s, read_exact, wire, plain);
+    pk_init(&s, read_exact, pointer_moved, wire, plain);
     if (!serve(&s)) {
         fprintf(stderr, "%d", rd_error);
         return 4;

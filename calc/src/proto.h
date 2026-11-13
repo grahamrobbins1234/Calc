@@ -12,6 +12,10 @@
  *
  * The (decompressed) payloads concatenate into a stream of the host
  * messages below. A message may span packets.
+ *
+ * A packet with bit 14 set instead is out-of-band: 3 bytes (u16 x, u8 y)
+ * giving the pointer position, acted on the moment it arrives - even in the
+ * middle of a frame - so the pointer never waits behind picture data.
  */
 #ifndef PROTO_H
 #define PROTO_H
@@ -31,9 +35,8 @@
 #define MSG_MODE    'M' /* + 1 byte bits per pixel (8, 4 or 1) */
 #define MSG_PALETTE 'P' /* + 1 byte count (0 = 256) + count little-endian 1555 colours */
 #define MSG_FRAME   'F' /* + frame ops, terminated by OP_END */
-#define MSG_CURSOR  'C' /* + u16 x + u8 y: pointer position; y = CURSOR_HIDDEN hides it */
 
-#define CURSOR_HIDDEN 0xFF
+#define CURSOR_HIDDEN 0xFF /* pointer y meaning "do not draw it" */
 
 /*
  * Frame ops walk the framebuffer bytes from the top-left.
@@ -53,6 +56,8 @@
 #define OP_MOVE 0xC1
 
 #define PKT_LZ4 0x8000
+#define PKT_OOB 0x4000
+#define PKT_OOB_LEN 3
 #define PKT_MAX 8192 /* largest payload, on the wire or decompressed */
 
 #define KEY_GROUPS 7

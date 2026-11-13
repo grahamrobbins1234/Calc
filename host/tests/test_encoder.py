@@ -7,10 +7,10 @@ import subprocess
 import numpy as np
 import pytest
 
-from tiremote.encoder import (apply_move, decode_frame, encode_frame, move_op, packetize,
-                              unpacketize)
+from tiremote.encoder import (apply_move, cursor_packet, decode_frame, encode_frame, move_op,
+                              packetize, packets, unpacketize)
 from tiremote.palette import MODES, palette_rgb, quantize
-from tiremote.protocol import (CURSOR_HIDDEN, MSG_CURSOR, MSG_FRAME, MSG_MODE, OP_END, PKT_LZ4,
+from tiremote.protocol import (CURSOR_HIDDEN, MSG_FRAME, MSG_MODE, OP_END, PKT_LZ4,
                                PKT_MAX)
 from tiremote.scroll import find_scroll
 
@@ -270,10 +270,6 @@ def run_calc(harness, wire):
     return 0, (bpp, cx, cy), lifted, drawn
 
 
-def cursor_message(x, y):
-    return struct.pack("<BHB", MSG_CURSOR, x, y)
-
-
 @pytest.mark.parametrize("name", ["256", "16", "2"])
 @pytest.mark.parametrize("lz4", [True, False])
 def test_c_decoder_matches_python(harness, name, lz4):
@@ -302,10 +298,15 @@ def test_c_decoder_matches_python(harness, name, lz4):
             else:
                 body = encode_frame(frame, model)
         messages += body
-        if index % 2:
+        # Pointer positions slip in between packets, including mid-frame.
+        for packet in packets(messages, lz4):
+            if rng.random() < 0.5:
+                spot = (int(rng.integers(0, 320)), int(rng.integers(0, 240)))
+                wire += cursor_packet(*spot)
+            wire += packet
+        if index % 3 == 0:
             spot = (int(rng.integers(0, 320)), int(rng.integers(0, 240)))
-            messages += cursor_message(*spot)
-        wire += packetize(messages, lz4)
+            wire += cursor_packet(*spot)
         model = frame
     assert wire.count(b"\xc1") > 0
 
@@ -332,13 +333,13 @@ def test_c_pointer_at_screen_edges(harness, name):
     setup = bytes([MSG_MODE, mode.bpp]) + mode.palette_message() + encode_frame(frame)
     for spot in ((0, 0), (319, 0), (0, 239), (319, 239), (313, 229), (317, 100)):
         # Moving the pointer around and back must leave the picture untouched.
-        messages = setup + cursor_message(5, 5) + cursor_message(*spot) + cursor_message(*spot)
-        status, state, lifted, drawn = run_calc(harness, packetize(messages))
+        wire = packetize(setup) + cursor_packet(5, 5) + cursor_packet(*spot) * 2
+        status, state, lifted, drawn = run_calc(harness, wire)
         assert status == 0 and state == (mode.bpp, *spot)
         assert (lifted == frame).all()
         assert mode.unpack(drawn)[spot[1], spot[0]] == 0
     status, state, lifted, drawn = run_calc(
-        harness, packetize(setup + cursor_message(9, 9) + cursor_message(0, CURSOR_HIDDEN)))
+        harness, packetize(setup) + cursor_packet(9, 9) + cursor_packet(0, CURSOR_HIDDEN))
     assert status == 0 and (drawn == frame).all()
 
 
@@ -363,6 +364,7 @@ def test_c_decoder_rejects_bad_input(harness):
 
     # Malformed packets and LZ4 blocks.
     assert run_calc(harness, struct.pack("<H", 0))[0] == 4
+    assert run_calc(harness, struct.pack("<H", 0x4000 | 4) + bytes(4))[0] == 4
     assert run_calc(harness, struct.pack("<H", PKT_MAX + 1) + bytes(PKT_MAX + 1))[0] == 4
     assert run_calc(harness, struct.pack("<HH", PKT_LZ4 | 4, PKT_MAX + 1) + bytes(4))[0] == 4
     rng = np.random.default_rng(6)

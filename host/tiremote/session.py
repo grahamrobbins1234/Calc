@@ -14,9 +14,10 @@ import time
 import numpy as np
 import serial
 
-from .encoder import apply_move, encode_frame, move_is_valid, move_op, packetize
+from .encoder import (apply_move, cursor_packet, encode_frame, move_is_valid, move_op,
+                      packets)
 from .palette import MODE_ORDER, MODES
-from .protocol import (CURSOR_HIDDEN, FRAME_WINDOW, KEY_GROUPS, MSG_ACK, MSG_BYE, MSG_CURSOR,
+from .protocol import (CURSOR_HIDDEN, FRAME_WINDOW, KEY_GROUPS, MSG_ACK, MSG_BYE,
                        MSG_HELLO, MSG_KEYS, MSG_MODE, PROTO_VERSION)
 from .scroll import find_scroll, pan_move
 
@@ -119,10 +120,16 @@ class Session:
     # -- host -> calculator -----------------------------------------------
 
     def _write(self, messages):
-        """Send host messages. Caller holds the write lock."""
-        data = packetize(messages, self.lz4)
-        self.port.write(data)
-        self.bytes_sent += len(data)
+        """Send host messages. Caller holds the write lock.
+
+        Goes out packet by packet, and the pointer position is slipped in
+        between them whenever it has changed, so the pointer keeps up even
+        while a large frame is on its way.
+        """
+        for packet in packets(messages, self.lz4):
+            self._send_cursor()
+            self.port.write(packet)
+            self.bytes_sent += len(packet)
 
     def _pointer(self):
         px, py = self.injector.position()
@@ -132,7 +139,9 @@ class Session:
         """Tell the calculator where to draw the pointer. Caller holds the write lock."""
         spot = self.renderer.to_lcd(self._pointer()) or (0, CURSOR_HIDDEN)
         if force or spot != self._cursor_sent:
-            self._write(struct.pack("<BHB", MSG_CURSOR, *spot))
+            packet = cursor_packet(*spot)
+            self.port.write(packet)
+            self.bytes_sent += len(packet)
             self._cursor_sent = spot
 
     def _render(self):

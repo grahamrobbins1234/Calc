@@ -71,10 +71,23 @@ static bool move_block(uint8_t *fb, unsigned int fb_size, unsigned int stride,
     return true;
 }
 
+bool rd_retouch;
+
+/* Call `touch` before the first change, and again after anything set rd_retouch. */
+#define TOUCH()                       \
+    do {                              \
+        if (touch && rd_retouch) {    \
+            rd_retouch = false;       \
+            touch();                  \
+        }                             \
+    } while (0)
+
 bool rd_decode_frame(rd_stream_t *s, uint8_t *fb, unsigned int fb_size, unsigned int stride,
                      void (*touch)(void)) {
     uint8_t *dst = fb;
     unsigned int left = fb_size;
+
+    rd_retouch = true;
 
     for (;;) {
         uint8_t header, op;
@@ -85,10 +98,7 @@ bool rd_decode_frame(rd_stream_t *s, uint8_t *fb, unsigned int fb_size, unsigned
         if (header == OP_MOVE) {
             uint8_t arg[8];
             if (!rd_read(s, arg, sizeof arg)) return false;
-            if (touch) {
-                touch();
-                touch = NULL;
-            }
+            TOUCH();
             if (!move_block(fb, fb_size, stride, arg)) FAIL(RD_ERR_MOVE);
             continue;
         }
@@ -109,10 +119,7 @@ bool rd_decode_frame(rd_stream_t *s, uint8_t *fb, unsigned int fb_size, unsigned
             dst += count;
             continue;
         }
-        if (touch) {
-            touch();
-            touch = NULL;
-        }
+        TOUCH();
         if (op == OP_RUN) {
             uint8_t value;
             NEXT_BYTE(value);
@@ -185,12 +192,26 @@ bool lz4_decode(const uint8_t *src, unsigned int src_len, uint8_t *dst, unsigned
 static pk_read_fn pk_read;
 static uint8_t *pk_wire, *pk_plain;
 
+static pk_oob_fn pk_oob;
+
 static bool pk_more(rd_stream_t *s) {
     uint8_t head[2];
     unsigned int n, plain_len;
 
-    if (!pk_read(head, 2)) return false;
-    n = head[0] | ((unsigned int)head[1] << 8);
+    for (;;) {
+        if (!pk_read(head, 2)) return false;
+        n = head[0] | ((unsigned int)head[1] << 8);
+        if (!(n & PKT_OOB)) break;
+
+        /* An urgent note that jumps the queue; it is not part of the stream. */
+        n &= ~(unsigned int)PKT_OOB;
+        if (n != PKT_OOB_LEN) FAIL(RD_ERR_PACKET);
+        {
+            uint8_t note[PKT_OOB_LEN];
+            if (!pk_read(note, sizeof note)) return false;
+            if (pk_oob) pk_oob(note);
+        }
+    }
 
     if (n & PKT_LZ4) {
         n &= ~(unsigned int)PKT_LZ4;
@@ -209,8 +230,9 @@ static bool pk_more(rd_stream_t *s) {
     return true;
 }
 
-void pk_init(rd_stream_t *s, pk_read_fn read, uint8_t *wire, uint8_t *plain) {
+void pk_init(rd_stream_t *s, pk_read_fn read, pk_oob_fn oob, uint8_t *wire, uint8_t *plain) {
     pk_read = read;
+    pk_oob = oob;
     pk_wire = wire;
     pk_plain = plain;
     s->p = s->end = plain;
