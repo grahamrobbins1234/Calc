@@ -53,6 +53,10 @@ def parse_args(argv=None):
     parser.add_argument("--colors", choices=["256", "16", "2"], default="256",
                         help="starting colour mode: 256 colours, 16 greys (half the data) or "
                              "2 = black and white (an eighth); [2nd]+[clear] cycles it")
+    parser.add_argument("--video", choices=["auto", "on", "off"], default="auto",
+                        help="half-resolution video mode for games and video: auto = only "
+                             "while most of the picture keeps changing (default); "
+                             "[2nd]+[del] cycles it")
     parser.add_argument("--no-lz4", action="store_true",
                         help="do not LZ4-compress data for the calculator")
     parser.add_argument("--dither", action="store_true",
@@ -161,7 +165,7 @@ def main(argv=None):
             print("Connected: %s." % label)
             session = Session(port, renderer, injector, mapper, origin,
                               fps=args.fps, dither=args.dither, colors=args.colors,
-                              lz4=not args.no_lz4)
+                              lz4=not args.no_lz4, video=args.video)
             started = time.monotonic()
             try:
                 error = session.run()

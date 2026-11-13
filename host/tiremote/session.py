@@ -16,12 +16,20 @@ import serial
 
 from .encoder import (apply_move, cursor_packet, encode_frame, move_is_valid, move_op,
                       packets)
-from .palette import MODE_ORDER, MODES
+from .palette import MODE_ORDER, MODES, half_mode
 from .protocol import (CURSOR_HIDDEN, FRAME_WINDOW, KEY_GROUPS, MSG_ACK, MSG_BYE,
-                       MSG_HELLO, MSG_KEYS, MSG_MODE, PROTO_VERSION)
+                       MSG_HELLO, MSG_KEYS, PROTO_VERSION)
 from .scroll import find_scroll, pan_move
 
 KEEPALIVE = 0.5  # send something at least this often so the calculator knows we are here
+
+# Automatic video mode: drop to half resolution while most of the picture
+# keeps changing (games, video), return to full detail once it settles.
+VIDEO_MODES = ["auto", "on", "off"]
+BUSY_FRACTION = 0.3  # a full-resolution frame this large (vs. the framebuffer) is "busy"
+BUSY_FRAMES = 2  # this many busy frames in a row switch to half resolution
+CALM_FRACTION = 0.15  # a half-resolution frame below this is "calm"
+CALM_TIME = 0.6  # seconds of calm before returning to full resolution
 TICK = 1 / 60
 
 _HELLO, _ACK = "hello", "ack"
@@ -29,7 +37,7 @@ _HELLO, _ACK = "hello", "ack"
 
 class Session:
     def __init__(self, port, renderer, injector, mapper, origin=(0, 0),
-                 fps=20, dither=False, colors="256", lz4=True, log=print):
+                 fps=20, dither=False, colors="256", lz4=True, video="auto", log=print):
         self.port = port  # an open serial.Serial (or anything with read/write)
         self.renderer = renderer
         self.injector = injector
@@ -39,12 +47,16 @@ class Session:
         self.dither = dither
         self.lz4 = lz4
         self.log = log
-        self.mode = MODES[colors]
+        self.video = video
+        self.mode = MODES[colors]  # the format currently on the wire (may be a half-res one)
         self.shown = None  # the calculator's framebuffer as we believe it to be
         self._shown_mapping = None  # which part of the desktop that picture shows
         self.frames = 0
         self.bytes_sent = 0
-        self._wanted_mode = self.mode
+        self._wanted_mode = self.mode  # the colour mode the user chose
+        self._busy = False  # automatic video mode is engaged
+        self._busy_frames = 0
+        self._calm_since = 0.0
         self._streaming = False  # a HELLO has been answered
         self._cursor_sent = None
         self._events = queue.Queue()
@@ -53,6 +65,7 @@ class Session:
         self._error = None
         self._warned_version = False
         mapper.on_colors = self.cycle_colors
+        mapper.on_video = self.cycle_video
 
     def stop(self):
         self._stop.set()
@@ -61,6 +74,30 @@ class Session:
         """Switch to the next colour mode (applied with the next frame)."""
         names = MODE_ORDER
         self._wanted_mode = MODES[names[(names.index(self._wanted_mode.name) + 1) % len(names)]]
+
+    def cycle_video(self):
+        """auto -> always half resolution -> never."""
+        self.video = VIDEO_MODES[(VIDEO_MODES.index(self.video) + 1) % len(VIDEO_MODES)]
+
+    def _target_mode(self, now):
+        """The format the next frame should be in."""
+        if self._busy and now - self._calm_since > CALM_TIME:
+            self._busy = False
+            self._busy_frames = 0
+        half = self.video == "on" or (self.video == "auto" and self._busy)
+        return half_mode(self._wanted_mode) if half else self._wanted_mode
+
+    def _watch_activity(self, size, fresh, now):
+        """Feed the automatic video mode with the size of the frame just encoded."""
+        if self.mode.half:
+            if fresh or size > CALM_FRACTION * self.mode.fb_size:
+                self._calm_since = now
+        elif not fresh:
+            busy = size > BUSY_FRACTION * self.mode.fb_size
+            self._busy_frames = self._busy_frames + 1 if busy else 0
+            if self._busy_frames >= BUSY_FRAMES:
+                self._busy = True
+                self._calm_since = now
 
     # -- calculator -> host -----------------------------------------------
 
@@ -146,14 +183,14 @@ class Session:
 
     def _render(self):
         self.renderer.viewport.x_step = max(1, 8 // self.mode.bpp)
-        status = "%s  %sc" % (self.mapper.status(), self.mode.name)
+        status = "%s  %sc  video:%s" % (self.mapper.status(), self.mode.name, self.video)
         rgb = self.renderer.render(self._pointer(), status)
         return self.mode.pack(rgb, self.dither)
 
     def _pan(self, mapping):
         """If the view slid since the last frame sent, the move that follows it."""
         old = self._shown_mapping
-        if old is None or mapping is None or old[2:] != mapping[2:]:
+        if self.mode.half or old is None or mapping is None or old[2:] != mapping[2:]:
             return None
         shift_x = (old[0] - mapping[0]) / mapping[2]
         shift_y = (old[1] - mapping[1]) / mapping[3]
@@ -217,8 +254,9 @@ class Session:
                     continue
                 next_render = time.monotonic() + self.frame_interval
 
-                if self._wanted_mode is not self.mode:
-                    self.mode = self._wanted_mode
+                target = self._target_mode(time.monotonic())
+                if (target.name, target.half) != (self.mode.name, self.mode.half):
+                    self.mode = target
                     self.shown = None
 
                 frame = self._render()
@@ -230,8 +268,10 @@ class Session:
 
                 out = b""
                 if fresh:
-                    out = bytes([MSG_MODE, self.mode.bpp]) + self.mode.palette_message()
-                out += self._encode(frame, mapping)
+                    out = self.mode.mode_message() + self.mode.palette_message()
+                body = self._encode(frame, mapping)
+                self._watch_activity(len(body), fresh, time.monotonic())
+                out += body
                 try:
                     with self._write_lock:
                         self._write(out)

@@ -42,6 +42,7 @@
 #define FB       ((uint8_t *)gfx_vram)
 #define PKT_WIRE (FB + SCREEN_W * SCREEN_H)
 #define PKT_PLAIN (PKT_WIRE + PKT_MAX)
+#define HALF_FB  (PKT_PLAIN + PKT_MAX) /* the 160x120 picture in half-resolution mode */
 
 static srl_device_t srl;
 static bool has_srl;
@@ -51,6 +52,7 @@ static uint8_t srl_buf[2048];
 static uint8_t palette_buf[512];
 
 static uint8_t bpp = 8;
+static bool half_res;
 static cursor_t cursor;
 static unsigned int cursor_x, cursor_y = CURSOR_HIDDEN;
 
@@ -253,10 +255,11 @@ static void serve(void) {
         switch (type) {
         case MSG_MODE:
             if (!rd_read(&s, arg, 1)) return;
-            if (!set_mode(arg[0])) {
+            if (!set_mode(arg[0] & (uint8_t)~MODE_HALF)) {
                 rd_error = RD_ERR_MODE;
                 return;
             }
+            half_res = (arg[0] & MODE_HALF) != 0;
             picture = true;
             break;
 
@@ -268,10 +271,21 @@ static void serve(void) {
             break;
 
         case MSG_FRAME:
-            /* The pointer is lifted off the picture only if the frame changes something. */
-            if (!rd_decode_frame(&s, FB, SCREEN_W * SCREEN_H * bpp / 8,
-                                 SCREEN_W * bpp / 8, pointer_hide))
-                return;
+            if (half_res) {
+                /* Decode off-screen, then draw the changed rows doubled. */
+                if (!rd_decode_frame(&s, HALF_FB, SCREEN_W * SCREEN_H / 4 * bpp / 8,
+                                     SCREEN_W / 2 * bpp / 8, NULL))
+                    return;
+                if (rd_dirty_hi > rd_dirty_lo) {
+                    pointer_hide();
+                    rd_expand(FB, HALF_FB, bpp, rd_dirty_lo, rd_dirty_hi);
+                }
+            } else {
+                /* The pointer is lifted off the picture only if the frame changes something. */
+                if (!rd_decode_frame(&s, FB, SCREEN_W * SCREEN_H * bpp / 8,
+                                     SCREEN_W * bpp / 8, pointer_hide))
+                    return;
+            }
             pointer_show();
             tx_byte(MSG_ACK);
             break;

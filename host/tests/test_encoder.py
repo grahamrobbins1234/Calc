@@ -9,7 +9,7 @@ import pytest
 
 from tiremote.encoder import (apply_move, cursor_packet, decode_frame, encode_frame, move_op,
                               packetize, packets, unpacketize)
-from tiremote.palette import MODES, palette_rgb, quantize
+from tiremote.palette import MODES, half_mode, palette_rgb, quantize
 from tiremote.protocol import (CURSOR_HIDDEN, MSG_FRAME, MSG_MODE, OP_END, PKT_LZ4,
                                PKT_MAX)
 from tiremote.scroll import find_scroll
@@ -263,7 +263,8 @@ def run_calc(harness, wire):
     if result.returncode != 0:
         return result.returncode, None, None, None
     out = result.stdout
-    bpp, cx, cy = out[0], out[1] | out[2] << 8, out[3]
+    bpp, cx, cy = out[0] & 0x7F, out[1] | out[2] << 8, out[3]
+    run_calc.half = bool(out[0] & 0x80)
     size = 320 * 240 * bpp // 8
     lifted = np.frombuffer(out, np.uint8, size, 4)
     drawn = np.frombuffer(out, np.uint8, size, 4 + size)
@@ -341,6 +342,65 @@ def test_c_pointer_at_screen_edges(harness, name):
     status, state, lifted, drawn = run_calc(
         harness, packetize(setup) + cursor_packet(9, 9) + cursor_packet(0, CURSOR_HIDDEN))
     assert status == 0 and (drawn == frame).all()
+
+
+@pytest.mark.parametrize("name", ["256", "16", "2"])
+def test_c_half_resolution_mode(harness, name):
+    """Video mode: a 160x120 picture shown with every pixel doubled."""
+    full = MODES[name]
+    half = half_mode(full)
+    assert half.fb_size * 4 == full.fb_size and half.mode_message()[1] == full.bpp | 0x80
+    rng = np.random.default_rng(12)
+
+    def doubled(model):
+        return half.unpack(model).repeat(2, axis=0).repeat(2, axis=1)
+
+    # Full resolution first, then into video mode and through a run of changes.
+    first = rng.integers(0, 256, full.fb_size, dtype=np.uint8)
+    wire = packetize(full.mode_message() + full.palette_message() + encode_frame(first))
+    wire += cursor_packet(100, 100)
+    model = None
+    for index, frame in enumerate(random_frames(13, 10, half.fb_size)):
+        messages = b""
+        if model is None:
+            messages = half.mode_message() + half.palette_message()
+        messages += encode_frame(frame, model)
+        wire += packetize(messages)
+        if index % 2:
+            wire += cursor_packet(int(rng.integers(0, 320)), int(rng.integers(0, 240)))
+        model = frame
+        if index in (0, 4, 9):
+            status, state, lifted, drawn = run_calc(harness, wire)
+            assert status == 0 and state[0] == full.bpp and run_calc.half
+            assert (full.unpack(lifted) == doubled(model)).all()
+            assert full.unpack(drawn)[state[2], state[1]] == 0  # pointer on top, full size
+
+    # A small change only redraws its own rows, and the result is still exact.
+    frame = model.copy()
+    frame[half.stride * 50 + 3] ^= 0xFF
+    wire += packetize(encode_frame(frame, model))
+    status, _, lifted, _ = run_calc(harness, wire)
+    assert status == 0 and (full.unpack(lifted) == doubled(frame)).all()
+
+    # And back to full resolution.
+    last = rng.integers(0, 256, full.fb_size, dtype=np.uint8)
+    wire += packetize(full.mode_message() + full.palette_message() + encode_frame(last))
+    status, _, lifted, _ = run_calc(harness, wire)
+    assert status == 0 and not run_calc.half and (lifted == last).all()
+
+
+def test_half_modes_average_and_roundtrip():
+    img = np.zeros((240, 320, 3), np.uint8)
+    img[0:2, 0:2] = 255  # one whole low-res pixel white
+    img[10, 10] = 255  # a quarter of another: averages to dark grey
+    for name in ("256", "16", "2"):
+        half = half_mode(MODES[name])
+        fb = half.pack(img)
+        assert fb.size == half.fb_size == MODES[name].fb_size // 4
+        shown = half.to_rgb(fb)
+        assert shown.shape == (240, 320, 3)
+        assert shown[0, 0].tolist() == shown[1, 1].tolist() == [255, 255, 255]
+        assert shown[10, 10].max() < 128 and shown[100, 100].tolist() == [0, 0, 0]
 
 
 def test_c_decoder_rejects_bad_input(harness):

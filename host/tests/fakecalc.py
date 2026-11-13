@@ -22,6 +22,8 @@ class FakeCalc:
         self.fd = fd
         self.auto_ack = auto_ack
         self.bpp = None
+        self.half = False
+        self.mode_changes = 0
         self.fb = None
         self.palette = None
         self.cursor = None
@@ -83,14 +85,15 @@ class FakeCalc:
         self.cursor = spot
 
     def _frame(self):
-        stride = LCD_W * self.bpp // 8
+        width = LCD_W // 2 if self.half else LCD_W
+        stride = width * self.bpp // 8
         pos = 0
         while True:
             header = self._get(1)[0]
             if header == OP_END:
                 return
             if header == OP_MOVE:
-                apply_move(self.fb.reshape(LCD_H, stride), *struct.unpack("<HBHBbb", self._get(8)))
+                apply_move(self.fb.reshape(-1, stride), *struct.unpack("<HBHBbb", self._get(8)))
                 self.moves += 1
                 continue
             op, count = header & 0xC0, header & 0x3F
@@ -109,11 +112,14 @@ class FakeCalc:
             while True:
                 kind = self._get(1)[0]
                 if kind == MSG_MODE:
-                    self.bpp = self._get(1)[0]
+                    mode = self._get(1)[0]
+                    self.bpp, self.half = mode & 0x7F, bool(mode & 0x80)
                     assert self.bpp in (8, 4, 1)
+                    self.mode_changes += 1
                     # Real video memory holds leftovers here, so start from noise.
                     self.fb = np.random.default_rng(0).integers(
-                        0, 256, LCD_W * LCD_H * self.bpp // 8, dtype=np.uint8)
+                        0, 256, LCD_W * LCD_H * self.bpp // 8 // (4 if self.half else 1),
+                        dtype=np.uint8)
                 elif kind == MSG_PALETTE:
                     count = self._get(1)[0] or 256
                     self.palette = self._get(count * 2)

@@ -71,6 +71,7 @@ a different order, or unplug and replug, both sides reconnect on their own.
 | `--fps N` | frame rate cap (default 20) |
 | `--view-only` | show the screen but ignore the calculator's keys |
 | `--colors N` | starting colour mode: `256` (default), `16` greys or `2` (black and white) |
+| `--video MODE` | half-resolution video mode: `auto` (default), `on` or `off` |
 | `--dither` | dithered colours: smoother gradients, more data per frame |
 | `--no-lz4` | do not LZ4-compress the stream (if the calculator turns out faster without) |
 | `--filter NAME` | downscaling filter: `lanczos` (default), `bilinear`, `box`, `nearest` |
@@ -98,6 +99,13 @@ pixel is one calculator pixel. Zoomed views follow the mouse pointer. The
 status line in the bottom-left corner shows the current layer, arrow mode,
 colour mode and zoom.
 
+**Video mode** is for games and video, where the whole picture changes every
+frame. The host notices this and drops to half resolution (160x120, shown
+doubled), which is a quarter of the data per frame; when the picture settles
+for about half a second it sends the full-detail picture again. Text is not
+readable while it is active, which is why it is automatic. `[2nd]`+`[del]`
+forces it on or off.
+
 If updates feel slow, drop the colour depth with `[2nd]`+`[clear]`: 16 greys
 sends half the data of 256 colours and black-and-white an eighth, and text
 stays readable in both.
@@ -111,6 +119,7 @@ stays readable in both.
 | `[trace]` / `[graph]` | Scroll up / down |
 | `[zoom]` | Zoom in; `[2nd]`+`[zoom]` zooms out |
 | `[2nd]`+`[clear]` | Cycle colour mode: 256 colours → 16 greys → black and white |
+| `[2nd]`+`[del]` | Cycle video mode: auto → always on → off |
 | `[mode]` | Switch the arrows between mouse movement and the arrow keys |
 | `[alpha]` | Toggle the letter layer (the green letters above the keys) |
 | `[2nd]` | Shift (hold) |
@@ -148,6 +157,9 @@ To change any of this, edit the two dictionaries at the top of
   `move` operations that shift a block of the picture up, down or sideways.
   The host uses them when something scrolls and when a zoomed view pans to
   follow the pointer, so only the newly exposed strip is sent.
+- **Video mode:** in half-resolution mode frames describe a 160x120 picture
+  kept in spare video memory; after each frame the calculator redraws just
+  the rows that changed, doubling every pixel.
 - **Compression:** host data travels in packets of up to 8 KB, each
   LZ4-compressed when that makes it smaller. The packet buffers live in the
   unused half of the calculator's video memory.

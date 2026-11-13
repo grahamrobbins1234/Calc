@@ -33,6 +33,8 @@ bool rd_read(rd_stream_t *s, uint8_t *dst, unsigned int len) {
 
 uint8_t rd_error;
 
+static void mark_dirty(unsigned int lo, unsigned int hi);
+
 #define FAIL(code)           \
     do {                     \
         rd_error = (code);   \
@@ -68,10 +70,17 @@ static bool move_block(uint8_t *fb, unsigned int fb_size, unsigned int stride,
         unsigned int to_xb = left ? xb - mx : xb + mx;
         memmove(fb + to_row * stride + to_xb, fb + row * stride + xb, wb);
     }
+    mark_dirty((up ? y - my : y + my) * stride, (up ? y - my : y + my) * stride + h * stride);
     return true;
 }
 
 bool rd_retouch;
+unsigned int rd_dirty_lo, rd_dirty_hi;
+
+static void mark_dirty(unsigned int lo, unsigned int hi) {
+    if (lo < rd_dirty_lo) rd_dirty_lo = lo;
+    if (hi > rd_dirty_hi) rd_dirty_hi = hi;
+}
 
 /* Call `touch` before the first change, and again after anything set rd_retouch. */
 #define TOUCH()                       \
@@ -88,6 +97,8 @@ bool rd_decode_frame(rd_stream_t *s, uint8_t *fb, unsigned int fb_size, unsigned
     unsigned int left = fb_size;
 
     rd_retouch = true;
+    rd_dirty_lo = fb_size;
+    rd_dirty_hi = 0;
 
     for (;;) {
         uint8_t header, op;
@@ -120,6 +131,7 @@ bool rd_decode_frame(rd_stream_t *s, uint8_t *fb, unsigned int fb_size, unsigned
             continue;
         }
         TOUCH();
+        mark_dirty((unsigned int)(dst - fb), (unsigned int)(dst - fb) + count);
         if (op == OP_RUN) {
             uint8_t value;
             NEXT_BYTE(value);
@@ -128,6 +140,50 @@ bool rd_decode_frame(rd_stream_t *s, uint8_t *fb, unsigned int fb_size, unsigned
             if (!rd_read(s, dst, count)) return false;
         }
         dst += count;
+    }
+}
+
+/* ---- half-resolution pictures ------------------------------------------ */
+
+/* Each 4-bit value with every bit doubled (for 1 bpp), or repeated (for 4 bpp). */
+static const uint8_t double_bits[16] = {0x00, 0x03, 0x0C, 0x0F, 0x30, 0x33, 0x3C, 0x3F,
+                                        0xC0, 0xC3, 0xCC, 0xCF, 0xF0, 0xF3, 0xFC, 0xFF};
+
+/* Stretch `n` framebuffer bytes to twice the width. Every byte becomes two. */
+static void double_row(uint8_t *dst, const uint8_t *src, unsigned int n, uint8_t bpp) {
+    if (bpp == 8) {
+        while (n--) {
+            uint8_t v = *src++;
+            *dst++ = v;
+            *dst++ = v;
+        }
+    } else if (bpp == 4) {
+        while (n--) {
+            uint8_t v = *src++;
+            *dst++ = (uint8_t)((v & 0x0F) * 0x11);
+            *dst++ = (uint8_t)((v >> 4) * 0x11);
+        }
+    } else {
+        while (n--) {
+            uint8_t v = *src++;
+            *dst++ = double_bits[v & 0x0F];
+            *dst++ = double_bits[v >> 4];
+        }
+    }
+}
+
+void rd_expand(uint8_t *screen, const uint8_t *half, uint8_t bpp, unsigned int lo,
+               unsigned int hi) {
+    unsigned int half_stride = SCREEN_W / 2 * bpp / 8;
+    unsigned int stride = half_stride * 2;
+    unsigned int row, last;
+
+    if (hi <= lo) return;
+    last = (hi - 1) / half_stride;
+    for (row = lo / half_stride; row <= last; row++) {
+        uint8_t *out = screen + row * 2 * stride;
+        double_row(out, half + row * half_stride, half_stride, bpp);
+        memcpy(out + stride, out, stride);
     }
 }
 

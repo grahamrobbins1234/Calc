@@ -2,7 +2,7 @@
  * Native test harness for calc/src/decode.c: behaves like the calculator's
  * serve() loop on a host -> calculator byte stream read from stdin.
  *
- * stdout: bpp, cursor x (2 bytes), cursor y, then the framebuffer with the
+ * stdout: mode byte, cursor x (2 bytes), cursor y, then the framebuffer with the
  * pointer lifted, then the framebuffer with the pointer drawn.
  * Exit status 0 on clean end of input, 4 if the stream was rejected
  * (the reason, rd_error, goes to stderr).
@@ -14,6 +14,8 @@
 #include "proto.h"
 
 static uint8_t fb[SCREEN_W * SCREEN_H];
+static uint8_t half_fb[SCREEN_W * SCREEN_H / 4];
+static bool half_res;
 static uint8_t wire[PKT_MAX], plain[PKT_MAX];
 static cursor_t cursor;
 static uint8_t bpp = 8;
@@ -53,6 +55,8 @@ static bool serve(rd_stream_t *s) {
         switch (type) {
         case MSG_MODE:
             if (!rd_read(s, arg, 1)) return false;
+            half_res = (arg[0] & MODE_HALF) != 0;
+            arg[0] &= (uint8_t)~MODE_HALF;
             if (arg[0] != 8 && arg[0] != 4 && arg[0] != 1) return false;
             cursor.shown = false;
             bpp = arg[0];
@@ -63,9 +67,19 @@ static bool serve(rd_stream_t *s) {
             if (!rd_read(s, palette, count * 2)) return false;
             break;
         case MSG_FRAME:
-            if (!rd_decode_frame(s, fb, SCREEN_W * SCREEN_H * bpp / 8, SCREEN_W * bpp / 8,
-                                 pointer_hide))
-                return false;
+            if (half_res) {
+                if (!rd_decode_frame(s, half_fb, SCREEN_W * SCREEN_H / 4 * bpp / 8,
+                                     SCREEN_W / 2 * bpp / 8, NULL))
+                    return false;
+                if (rd_dirty_hi > rd_dirty_lo) {
+                    pointer_hide();
+                    rd_expand(fb, half_fb, bpp, rd_dirty_lo, rd_dirty_hi);
+                }
+            } else {
+                if (!rd_decode_frame(s, fb, SCREEN_W * SCREEN_H * bpp / 8, SCREEN_W * bpp / 8,
+                                     pointer_hide))
+                    return false;
+            }
             pointer_show();
             break;
         default:
@@ -87,7 +101,7 @@ int main(void) {
     }
 
     size = SCREEN_W * SCREEN_H * bpp / 8;
-    head[0] = bpp;
+    head[0] = (uint8_t)(bpp | (half_res ? MODE_HALF : 0));
     head[1] = (uint8_t)cursor_x;
     head[2] = (uint8_t)(cursor_x >> 8);
     head[3] = (uint8_t)cursor_y;

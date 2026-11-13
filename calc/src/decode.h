@@ -45,6 +45,17 @@ bool rd_decode_frame(rd_stream_t *s, uint8_t *fb, unsigned int fb_size, unsigned
 
 extern bool rd_retouch;
 
+/* The byte range [rd_dirty_lo, rd_dirty_hi) of `fb` the last frame wrote to (empty if lo >= hi). */
+extern unsigned int rd_dirty_lo, rd_dirty_hi;
+
+/*
+ * Half-resolution mode: `half` holds a 160x120 picture. Draw the rows that
+ * cover its bytes [lo, hi) onto the 320x240 `screen`, each pixel doubled
+ * in both directions.
+ */
+void rd_expand(uint8_t *screen, const uint8_t *half, uint8_t bpp, unsigned int lo,
+               unsigned int hi);
+
 /* ---- packets ---------------------------------------------------------- */
 
 /* Reads exactly `len` raw bytes from the link, or returns false. */

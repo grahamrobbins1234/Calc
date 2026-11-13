@@ -20,7 +20,7 @@
 #ifndef PROTO_H
 #define PROTO_H
 
-#define PROTO_VERSION 3
+#define PROTO_VERSION 4
 
 /* Calculator -> host */
 #define MSG_HELLO 0xA1 /* + 1 byte version. "Start over: send mode, palette and a full frame." */
@@ -32,7 +32,12 @@
 #define FRAME_WINDOW 2
 
 /* Host -> calculator */
-#define MSG_MODE    'M' /* + 1 byte bits per pixel (8, 4 or 1) */
+#define MSG_MODE    'M' /* + 1 byte: bits per pixel (8, 4 or 1), plus MODE_HALF */
+/*
+ * MODE_HALF: frames describe a 160x120 picture which the calculator shows
+ * with every pixel doubled. A quarter of the data, for fast-moving pictures.
+ */
+#define MODE_HALF 0x80
 #define MSG_PALETTE 'P' /* + 1 byte count (0 = 256) + count little-endian 1555 colours */
 #define MSG_FRAME   'F' /* + frame ops, terminated by OP_END */
 

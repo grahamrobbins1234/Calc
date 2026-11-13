@@ -7,7 +7,7 @@ because desktops are mostly grey and the cube alone has almost none.
 
 import numpy as np
 
-from .protocol import LCD_H, LCD_W, MSG_PALETTE
+from .protocol import LCD_H, LCD_W, MODE_HALF, MSG_MODE, MSG_PALETTE
 
 R_LEVELS, G_LEVELS, B_LEVELS = 6, 8, 5
 CUBE_SIZE = R_LEVELS * G_LEVELS * B_LEVELS  # 240
@@ -101,14 +101,19 @@ class ColorMode:
 
     name = ""
     bpp = 8
+    width, height = LCD_W, LCD_H  # size of the picture the frames describe
+    half = False
 
     @property
     def stride(self):
-        return LCD_W * self.bpp // 8
+        return self.width * self.bpp // 8
 
     @property
     def fb_size(self):
-        return self.stride * LCD_H
+        return self.stride * self.height
+
+    def mode_message(self):
+        return bytes([MSG_MODE, self.bpp | (MODE_HALF if self.half else 0)])
 
     def palette_message(self):
         colours = self.palette_rgb().astype(np.uint16)
@@ -130,7 +135,7 @@ class Colour256(ColorMode):
         return quantize(rgb, dither).ravel()
 
     def unpack(self, fb):
-        return np.asarray(fb).reshape(LCD_H, LCD_W)
+        return np.asarray(fb).reshape(self.height, self.width)
 
 
 class Grey16(ColorMode):
@@ -149,8 +154,8 @@ class Grey16(ColorMode):
         return (level[:, 0::2] | (level[:, 1::2] << 4)).ravel()
 
     def unpack(self, fb):
-        fb = np.asarray(fb).reshape(LCD_H, -1)
-        out = np.empty((LCD_H, LCD_W), dtype=np.uint8)
+        fb = np.asarray(fb).reshape(self.height, -1)
+        out = np.empty((self.height, self.width), dtype=np.uint8)
         out[:, 0::2] = fb & 15
         out[:, 1::2] = fb >> 4
         return out
@@ -171,8 +176,31 @@ class Mono(ColorMode):
         return np.packbits(luma >= 128, axis=1, bitorder="little").ravel()
 
     def unpack(self, fb):
-        fb = np.asarray(fb).reshape(LCD_H, -1)
+        fb = np.asarray(fb).reshape(self.height, -1)
         return np.unpackbits(fb, axis=1, bitorder="little")
+
+
+def half_mode(mode):
+    """The half-resolution ("video") version of a colour mode: a 160x120
+    picture the calculator shows with every pixel doubled. A quarter of the
+    data per frame, for pictures that change all over, such as games."""
+    if mode.half:
+        return mode
+
+    class Half(type(mode)):
+        width, height = LCD_W // 2, LCD_H // 2
+        half = True
+
+        def pack(self, rgb, dither=False):
+            h, w = rgb.shape[:2]
+            small = rgb.reshape(h // 2, 2, w // 2, 2, 3).mean(axis=(1, 3)).astype(np.uint8)
+            return super().pack(small, dither)
+
+        def to_rgb(self, fb):
+            small = super().to_rgb(fb)
+            return small.repeat(2, axis=0).repeat(2, axis=1)
+
+    return Half()
 
 
 MODES = {mode.name: mode for mode in (Colour256(), Grey16(), Mono())}

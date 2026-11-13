@@ -13,6 +13,7 @@ Action strings:
   "arrows"             toggle the arrow keys between mouse movement and arrow keys
   "zoom" / "zoom_out"  zoom in / out one level
   "colors"             cycle 256 colours -> 16 greys -> black and white
+  "video"              cycle half-resolution video mode: auto -> on -> off
 """
 
 import threading
@@ -73,6 +74,7 @@ ALPHA_LAYER = {
 SECOND_LAYER = {
     "zoom": "zoom_out",
     "clear": "colors",
+    "del": "video",
 }
 
 # What Shift does to a typed character (US layout).
@@ -104,6 +106,7 @@ class KeyMapper:
         self.backend = backend
         self.on_zoom = on_zoom or (lambda step: None)
         self.on_colors = lambda: None
+        self.on_video = lambda: None
         self.normal = dict(NORMAL_LAYER if normal is None else normal)
         self.alpha_layer = dict(ALPHA_LAYER if alpha is None else alpha)
         self.alpha = False
@@ -177,6 +180,8 @@ class KeyMapper:
             self.on_zoom(1 if action == "zoom" else -1)
         elif action == "colors":
             self.on_colors()
+        elif action == "video":
+            self.on_video()
         elif action.startswith("key:"):
             held = ("key", action[4:])
             self.backend.key(held[1], True)
