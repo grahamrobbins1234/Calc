@@ -1,6 +1,16 @@
 """Input backends: where mouse and keyboard actions actually go."""
 
+import functools
 import sys
+import threading
+
+
+def _locked(method):
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+    return wrapper
 
 
 class NullInjector:
@@ -27,7 +37,13 @@ class NullInjector:
 
 
 class PynputInjector:
-    """Drives the real mouse and keyboard through pynput."""
+    """Drives the real mouse and keyboard through pynput.
+
+    Calls arrive from several threads (key reader, pointer ticker, frame
+    loop). They are serialised here: on macOS the system bindings pynput
+    uses load their functions on first use, and two threads doing that at
+    once fails with a KeyError.
+    """
 
     _MODIFIERS = ("ctrl", "alt", "cmd")
 
@@ -40,6 +56,8 @@ class PynputInjector:
         self._mouse = mouse.Controller()
         self._mods = set()
         self._down = {}  # name -> the pynput key object that was pressed
+        self._lock = threading.Lock()
+        self.position()  # load the pointer bindings now, on one thread
 
     def _resolve(self, name):
         keyboard = self._keyboard_mod
@@ -51,6 +69,7 @@ class PynputInjector:
             return keyboard.KeyCode.from_vk(ord(name.upper()))
         return name
 
+    @_locked
     def key(self, name, down):
         if down:
             key = self._resolve(name)
@@ -64,6 +83,7 @@ class PynputInjector:
                 self._keyboard.release(key)
             self._mods.discard(name)
 
+    @_locked
     def button(self, name, down):
         button = getattr(self._mouse_mod.Button, name)
         if down:
@@ -71,12 +91,15 @@ class PynputInjector:
         else:
             self._mouse.release(button)
 
+    @_locked
     def scroll(self, dy):
         self._mouse.scroll(0, dy)
 
+    @_locked
     def move(self, dx, dy):
         self._mouse.move(dx, dy)
 
+    @_locked
     def position(self):
         x, y = self._mouse.position
         return int(x), int(y)
