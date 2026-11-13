@@ -222,7 +222,7 @@ def test_session_over_tcp(compress):
     assert wait_for(in_sync)
     screen = calc.fb.reshape(LCD_H, LCD_W)
     assert screen[100, 10] != screen[100, 200]
-    assert calc.cursor == (160, 120)
+    assert wait_for(lambda: calc.cursor == (160, 120))
 
     calc.keys("right")  # moves the (virtual, view-only) pointer
     assert wait_for(lambda: injector.position()[0] > 320)
