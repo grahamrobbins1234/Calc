@@ -11,7 +11,7 @@ bool link_make_response(const uint8_t challenge[LINK_CHALLENGE_LEN], const char 
     memcpy(response, LINK_MAGIC, 4);
     response[4] = LINK_VERSION;
     response[5] = flags;
-    hmac_sha256((const uint8_t *)key, strlen(key), challenge + 5, LINK_NONCE_LEN, response + 6);
+    tird_hmac_sha256((const uint8_t *)key, strlen(key), challenge + 5, LINK_NONCE_LEN, response + 6);
     return true;
 }
 

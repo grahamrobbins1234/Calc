@@ -44,7 +44,7 @@ static void compress(sha256_t *s, const uint8_t *p) {
     for (i = 0; i < 8; i++) s->state[i] += v[i];
 }
 
-void sha256_init(sha256_t *s) {
+void tird_sha256_init(sha256_t *s) {
     static const uint32_t init[8] = {0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
                                      0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19};
     memcpy(s->state, init, sizeof init);
@@ -52,7 +52,7 @@ void sha256_init(sha256_t *s) {
     s->fill = 0;
 }
 
-void sha256_update(sha256_t *s, const uint8_t *data, size_t len) {
+void tird_sha256_update(sha256_t *s, const uint8_t *data, size_t len) {
     s->length += len;
     while (len) {
         size_t n = 64 - s->fill;
@@ -68,7 +68,7 @@ void sha256_update(sha256_t *s, const uint8_t *data, size_t len) {
     }
 }
 
-void sha256_final(sha256_t *s, uint8_t out[SHA256_LEN]) {
+void tird_sha256_final(sha256_t *s, uint8_t out[SHA256_LEN]) {
     uint64_t bits = s->length * 8;
     uint8_t pad[72] = {0x80};
     uint8_t len_be[8];
@@ -76,8 +76,8 @@ void sha256_final(sha256_t *s, uint8_t out[SHA256_LEN]) {
     int i;
 
     for (i = 0; i < 8; i++) len_be[i] = (uint8_t)(bits >> (56 - 8 * i));
-    sha256_update(s, pad, pad_len);
-    sha256_update(s, len_be, 8);
+    tird_sha256_update(s, pad, pad_len);
+    tird_sha256_update(s, len_be, 8);
     for (i = 0; i < 8; i++) {
         out[4 * i] = (uint8_t)(s->state[i] >> 24);
         out[4 * i + 1] = (uint8_t)(s->state[i] >> 16);
@@ -86,29 +86,29 @@ void sha256_final(sha256_t *s, uint8_t out[SHA256_LEN]) {
     }
 }
 
-void hmac_sha256(const uint8_t *key, size_t key_len, const uint8_t *msg, size_t msg_len,
+void tird_hmac_sha256(const uint8_t *key, size_t key_len, const uint8_t *msg, size_t msg_len,
                  uint8_t out[SHA256_LEN]) {
     sha256_t s;
     uint8_t block[64] = {0}, pad[64], inner[SHA256_LEN];
     int i;
 
     if (key_len > 64) {
-        sha256_init(&s);
-        sha256_update(&s, key, key_len);
-        sha256_final(&s, block);
+        tird_sha256_init(&s);
+        tird_sha256_update(&s, key, key_len);
+        tird_sha256_final(&s, block);
     } else {
         memcpy(block, key, key_len);
     }
 
     for (i = 0; i < 64; i++) pad[i] = block[i] ^ 0x36;
-    sha256_init(&s);
-    sha256_update(&s, pad, 64);
-    sha256_update(&s, msg, msg_len);
-    sha256_final(&s, inner);
+    tird_sha256_init(&s);
+    tird_sha256_update(&s, pad, 64);
+    tird_sha256_update(&s, msg, msg_len);
+    tird_sha256_final(&s, inner);
 
     for (i = 0; i < 64; i++) pad[i] = block[i] ^ 0x5c;
-    sha256_init(&s);
-    sha256_update(&s, pad, 64);
-    sha256_update(&s, inner, SHA256_LEN);
-    sha256_final(&s, out);
+    tird_sha256_init(&s);
+    tird_sha256_update(&s, pad, 64);
+    tird_sha256_update(&s, inner, SHA256_LEN);
+    tird_sha256_final(&s, out);
 }
