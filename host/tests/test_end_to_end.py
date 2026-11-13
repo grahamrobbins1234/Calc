@@ -4,7 +4,6 @@ Needs a real X display (CI runs it under xvfb-run); skipped otherwise.
 """
 
 import os
-import select
 import sys
 import threading
 import time
@@ -12,69 +11,13 @@ import time
 import numpy as np
 import pytest
 
-from tiremote.palette import palette_1555
-from tiremote.protocol import (FB_SIZE, MSG_BYE, MSG_FRAME, MSG_HELLO, MSG_KEYS, MSG_PALETTE,
-                               MSG_REQ, OP_END, OP_LIT, OP_RUN, PROTO_VERSION)
-from test_keymap import matrix
+from fakecalc import FakeCalc
+from tiremote.palette import MODES
+from tiremote.protocol import CURSOR_HIDDEN
 
 pytestmark = pytest.mark.skipif(
     not sys.platform.startswith("linux") or not os.environ.get("DISPLAY"),
     reason="needs Linux with an X display")
-
-
-class FakeCalc:
-    """Speaks the calculator side of the protocol on a pty master."""
-
-    def __init__(self, fd):
-        self.fd = fd
-        self.fb = np.zeros(FB_SIZE, np.uint8)
-        self.palette = None
-
-    def send(self, *data):
-        os.write(self.fd, bytes(data))
-
-    def keys(self, *names):
-        os.write(self.fd, bytes([MSG_KEYS]) + matrix(*names))
-
-    def _read(self, count):
-        data = b""
-        while len(data) < count:
-            ready, _, _ = select.select([self.fd], [], [], 5.0)
-            assert ready, "host went quiet"
-            data += os.read(self.fd, count - len(data))
-        return data
-
-    def receive_frame(self):
-        """Mirror of the calculator's exchange(): returns bytes consumed."""
-        used = 0
-        while True:
-            kind = self._read(1)[0]
-            used += 1
-            if kind == MSG_PALETTE:
-                self.palette = self._read(512)
-                used += 512
-                continue
-            assert kind == MSG_FRAME
-            pos = 0
-            while True:
-                header = self._read(1)[0]
-                used += 1
-                op = header & 0xC0
-                if op == OP_END:
-                    return used
-                count = header & 0x3F
-                if not count:
-                    lo, hi = self._read(2)
-                    count = lo | hi << 8
-                    used += 2
-                assert pos + count <= FB_SIZE
-                if op == OP_RUN:
-                    self.fb[pos:pos + count] = self._read(1)[0]
-                    used += 1
-                elif op == OP_LIT:
-                    self.fb[pos:pos + count] = np.frombuffer(self._read(count), np.uint8)
-                    used += count
-                pos += count
 
 
 @pytest.fixture
@@ -98,7 +41,9 @@ def stack():
     thread = threading.Thread(target=session.run, daemon=True)
     thread.start()
     try:
-        yield FakeCalc(master), session, injector, viewport, mapper
+        calc = FakeCalc(master)
+        yield calc, session, injector, viewport, mapper
+        calc.close()
     finally:
         session.stop()
         thread.join(timeout=3)
@@ -116,22 +61,33 @@ def wait_for(predicate, timeout=3.0):
     return False
 
 
+def in_sync(calc, session):
+    """The calculator shows exactly what the host believes it shows."""
+    return (calc.error is None and calc.fb is not None and session.shown is not None
+            and calc.fb.size == session.shown.size and (calc.fb == session.shown).all())
+
+
 def test_stream_and_input(stack):
     calc, session, injector, viewport, mapper = stack
     injector._mouse.position = (100, 100)
 
-    # Handshake: palette plus a full frame.
-    calc.send(MSG_HELLO, PROTO_VERSION)
-    calc.receive_frame()
-    assert calc.palette == palette_1555()
-    first = calc.fb.copy()
-    assert first.reshape(240, 320)[:, :].any(), "frame should contain the cursor/status"
+    # Handshake: mode, palette, a full frame and the pointer position.
+    calc.hello()
+    assert wait_for(lambda: calc.frames >= 1 and calc.cursor is not None)
+    assert calc.bpp == 8 and calc.palette == MODES["256"].palette_message()[2:]
+    assert wait_for(lambda: in_sync(calc, session))
+    assert calc.cursor == (100 * 320 // 1280, 100 * 180 // 720)
 
-    # A static screen answers with an (almost) empty delta.
-    calc.send(MSG_REQ)
-    assert calc.receive_frame() < 200
+    # A static screen costs next to nothing: only small keep-alive frames.
+    time.sleep(0.3)
+    before, frames = calc.wire_bytes, calc.frames
+    time.sleep(1.2)
+    assert 1 <= calc.frames - frames <= 4
+    assert calc.wire_bytes - before < 100
 
-    # Arrow keys move the real pointer; the next delta shows the cursor moving.
+    # Arrow keys move the real pointer, and the calculator's pointer follows
+    # through cursor messages alone - no picture data.
+    before, start_x = calc.wire_bytes, calc.cursor[0]
     calc.keys("right")
     assert wait_for(lambda: injector.position()[0] > 100)
     assert wait_for(lambda: injector.position()[0] > 200), "pointer should glide while held"
@@ -140,29 +96,60 @@ def test_stream_and_input(stack):
     x_after = injector.position()[0]
     time.sleep(0.2)
     assert injector.position()[0] == x_after, "pointer must stop on release"
-    calc.send(MSG_REQ)
-    calc.receive_frame()
-    assert (calc.fb != first).any()
+    assert wait_for(lambda: calc.cursor[0] == x_after * 320 // 1280)
+    assert calc.cursor[0] > start_x
+    assert calc.wire_bytes - before < 1500
+    assert in_sync(calc, session)
 
-    # Zoom key switches to a 1:1 crop; the calculator's copy stays exact.
+    # Zoom key switches to a closer view; the calculator's copy stays exact.
+    frames = calc.frames
     calc.keys("zoom")
     calc.keys()
     assert wait_for(lambda: viewport.level == 1)
-    for _ in range(3):
-        calc.send(MSG_REQ)
-        calc.receive_frame()
-    time.sleep(0.2)
-    calc.send(MSG_REQ)
-    calc.receive_frame()
-    expected = session._render()
-    assert (calc.fb == expected).all()
+    assert wait_for(lambda: calc.frames > frames + 1 and in_sync(calc, session))
 
-    # A resync request gets the palette and a complete frame again.
-    calc.fb[:] = 0
+    # [2nd]+[clear] cycles the colour mode: 16 greys, then black and white.
+    for bpp in (4, 1):
+        calc.keys("2nd")
+        calc.keys("2nd", "clear")
+        calc.keys()
+        assert wait_for(lambda: calc.bpp == bpp and in_sync(calc, session))
+        assert calc.fb.size == 320 * 240 * bpp // 8
+
+    # A resync request gets mode, palette and a complete frame again.
+    frames = calc.frames
     calc.palette = None
-    calc.send(MSG_HELLO, PROTO_VERSION)
-    calc.receive_frame()
-    assert calc.palette is not None and (calc.fb == session._render()).all()
+    calc.hello()
+    assert wait_for(lambda: calc.frames > frames and calc.palette is not None)
+    assert wait_for(lambda: in_sync(calc, session))
+
+    # Pointer leaves the shared view: the calculator is told to hide it.
+    viewport.level = len(viewport.scales) - 1
+    injector._mouse.position = (20, 20)
+    assert wait_for(lambda: calc.cursor is not None and calc.cursor[1] != CURSOR_HIDDEN)
+    assert calc.error is None
+
+
+def test_frame_window_and_version_check(stack):
+    calc, session, injector, viewport, mapper = stack
+    logged = []
+    session.log = logged.append
+
+    calc.hello(version=1)  # an old calculator program
+    time.sleep(0.5)
+    assert calc.frames == 0 and any("version" in line for line in logged)
+
+    # Without acknowledgements the host stops after the window of two frames.
+    calc.auto_ack = False
+    calc.hello()
+    assert wait_for(lambda: calc.frames == 2)
+    time.sleep(1.2)
+    assert calc.frames == 2
+    calc.ack()
+    assert wait_for(lambda: calc.frames == 3)
+    time.sleep(0.7)
+    assert calc.frames == 3
+    assert in_sync(calc, session)
 
 
 def test_keyboard_reaches_x_server(stack):
@@ -207,6 +194,6 @@ def test_keyboard_reaches_x_server(stack):
     # Held keys are released when the calculator says goodbye.
     calc.keys("y=")
     assert wait_for(lambda: "y=" in mapper._held)
-    calc.send(MSG_BYE)
+    calc.bye()
     assert wait_for(lambda: not mapper._held)
     disp.close()

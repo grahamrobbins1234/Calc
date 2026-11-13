@@ -7,6 +7,8 @@ because desktops are mostly grey and the cube alone has almost none.
 
 import numpy as np
 
+from .protocol import LCD_H, LCD_W, MSG_PALETTE
+
 R_LEVELS, G_LEVELS, B_LEVELS = 6, 8, 5
 CUBE_SIZE = R_LEVELS * G_LEVELS * B_LEVELS  # 240
 GREY_BASE = CUBE_SIZE
@@ -79,3 +81,99 @@ def quantize(rgb, dither=False):
     grey = (hi - lo) <= GREY_TOLERANCE
     luma = ((r.astype(np.uint16) * 77 + g.astype(np.uint16) * 150 + b.astype(np.uint16) * 29) >> 8)
     return np.where(grey, _GREY_LUT[luma], out).astype(np.uint8)
+
+
+def _luma(rgb):
+    r, g, b = (rgb[:, :, i].astype(np.uint16) for i in range(3))
+    return (r * 77 + g * 150 + b * 29) >> 8
+
+
+def _bayer(h, w):
+    return np.tile(_BAYER, (h // 4 + 1, w // 4 + 1))[:h, :w]
+
+
+class ColorMode:
+    """A screen format the calculator can be switched to.
+
+    `pack` turns an RGB image into the exact framebuffer bytes; pixels within
+    a byte are stored leftmost-first in the lowest bits.
+    """
+
+    name = ""
+    bpp = 8
+
+    @property
+    def stride(self):
+        return LCD_W * self.bpp // 8
+
+    @property
+    def fb_size(self):
+        return self.stride * LCD_H
+
+    def palette_message(self):
+        colours = self.palette_rgb().astype(np.uint16)
+        words = ((colours[:, 0] >> 3) << 10) | ((colours[:, 1] >> 3) << 5) | (colours[:, 2] >> 3)
+        return bytes([MSG_PALETTE, len(colours) & 0xFF]) + words.astype("<u2").tobytes()
+
+    def to_rgb(self, fb):
+        """Framebuffer bytes back to an (H, W, 3) image, as the LCD would show them."""
+        return self.palette_rgb()[self.unpack(fb)]
+
+
+class Colour256(ColorMode):
+    name, bpp = "256", 8
+
+    def palette_rgb(self):
+        return palette_rgb()
+
+    def pack(self, rgb, dither=False):
+        return quantize(rgb, dither).ravel()
+
+    def unpack(self, fb):
+        return np.asarray(fb).reshape(LCD_H, LCD_W)
+
+
+class Grey16(ColorMode):
+    """16 greys at 4 bits per pixel: half the data, still good for text."""
+
+    name, bpp = "16", 4
+
+    def palette_rgb(self):
+        return np.repeat((np.arange(16, dtype=np.uint8) * 17)[:, None], 3, axis=1)
+
+    def pack(self, rgb, dither=False):
+        luma = _luma(rgb).astype(np.float32)
+        if dither:
+            luma = luma + _bayer(*luma.shape) * 17
+        level = np.clip((luma * 15 + 127) // 255, 0, 15).astype(np.uint8)
+        return (level[:, 0::2] | (level[:, 1::2] << 4)).ravel()
+
+    def unpack(self, fb):
+        fb = np.asarray(fb).reshape(LCD_H, -1)
+        out = np.empty((LCD_H, LCD_W), dtype=np.uint8)
+        out[:, 0::2] = fb & 15
+        out[:, 1::2] = fb >> 4
+        return out
+
+
+class Mono(ColorMode):
+    """Black and white at 1 bit per pixel: an eighth of the data."""
+
+    name, bpp = "2", 1
+
+    def palette_rgb(self):
+        return np.array([[0, 0, 0], [255, 255, 255]], dtype=np.uint8)
+
+    def pack(self, rgb, dither=False):
+        luma = _luma(rgb).astype(np.float32)
+        if dither:
+            luma = luma + _bayer(*luma.shape) * 255
+        return np.packbits(luma >= 128, axis=1, bitorder="little").ravel()
+
+    def unpack(self, fb):
+        fb = np.asarray(fb).reshape(LCD_H, -1)
+        return np.unpackbits(fb, axis=1, bitorder="little")
+
+
+MODES = {mode.name: mode for mode in (Colour256(), Grey16(), Mono())}
+MODE_ORDER = ["256", "16", "2"]

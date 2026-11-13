@@ -1,16 +1,18 @@
 /*
  * REMOTE - remote desktop client for the TI-84 Plus CE.
  *
- * The calculator plugs into the PC over USB and shows up as a USB serial
- * (CDC ACM) device. The host program streams the desktop as delta-encoded
- * 320x240 8bpp frames; this program draws them and reports the raw keypad
- * state, which the host turns into mouse and keyboard input.
+ * The calculator plugs into the PC (or the Wi-Fi bridge) over USB and shows
+ * up as a USB serial (CDC ACM) device. The host streams the desktop as
+ * delta-encoded frames; this program draws them, draws the mouse pointer,
+ * and reports the raw keypad state, which the host turns into mouse and
+ * keyboard input.
  *
  * Quit with [2nd] + [mode].
  */
 #include <graphx.h>
 #include <keypadc.h>
 #include <srldrvce.h>
+#include <sys/lcd.h>
 #include <usbdrvce.h>
 
 #include <stdbool.h>
@@ -21,25 +23,41 @@
 #include "decode.h"
 #include "proto.h"
 
-#define FB_SIZE (GFX_LCD_WIDTH * GFX_LCD_HEIGHT)
-
-#define RX_TIMEOUT   (CLOCKS_PER_SEC * 3 / 2) /* give up on the host after 1.5 s */
+#define RX_TIMEOUT   (CLOCKS_PER_SEC * 3 / 2) /* give up on the host after 1.5 s of silence */
 #define KEY_INTERVAL (CLOCKS_PER_SEC / 200)   /* scan the keypad every 5 ms while waiting */
 
 #define COLOR_BLACK 0
 #define COLOR_WHITE 255
+
+/* LCD controller bits-per-pixel field (bits 1-3 of the control register). */
+#define LCD_BPP_MASK 0x0E
+#define LCD_BPP_1    0x00
+#define LCD_BPP_4    0x04
+#define LCD_BPP_8    0x06
+
+/*
+ * The framebuffer never needs more than the first half of video memory
+ * (320x240 at 8 bits per pixel), so the second half holds the packet buffers.
+ */
+#define FB       ((uint8_t *)gfx_vram)
+#define PKT_WIRE (FB + SCREEN_W * SCREEN_H)
+#define PKT_PLAIN (PKT_WIRE + PKT_MAX)
 
 static srl_device_t srl;
 static bool has_srl;
 static usb_device_t pending_dev; /* serial device waiting to be opened */
 
 static uint8_t srl_buf[2048];
-static uint8_t rx_buf[1024];
 static uint8_t palette_buf[512];
+
+static uint8_t bpp = 8;
+static cursor_t cursor;
+static unsigned int cursor_x, cursor_y = CURSOR_HIDDEN;
 
 static uint8_t keys[KEY_GROUPS];
 static clock_t last_key_scan;
 static bool quit;
+static bool picture; /* the host has drawn over the status screen */
 
 static usb_error_t handle_usb_event(usb_event_t event, void *event_data,
                                     usb_callback_data_t *callback_data) {
@@ -123,32 +141,34 @@ static void poll_keys(void) {
     }
 }
 
-/* Stream refill: block until the host sends something, or time out. */
-static bool rx_more(rd_stream_t *s) {
-    clock_t start = clock();
-    for (;;) {
+/* Read exactly `len` bytes from the host. Fails after RX_TIMEOUT without progress. */
+static bool rx_exact(uint8_t *dst, unsigned int len) {
+    clock_t last = clock();
+    while (len) {
         int n;
 
         usb_HandleEvents();
         if (!has_srl) return false;
 
-        n = srl_Read(&srl, rx_buf, sizeof rx_buf);
+        n = srl_Read(&srl, dst, len);
         if (n < 0) {
             has_srl = false;
             return false;
         }
         if (n > 0) {
-            s->p = rx_buf;
-            s->end = rx_buf + n;
-            return true;
+            dst += n;
+            len -= n;
+            last = clock();
+            continue;
         }
 
         if (clock() - last_key_scan >= KEY_INTERVAL) {
             poll_keys();
             if (quit) return false;
         }
-        if (clock() - start > RX_TIMEOUT) return false;
+        if (clock() - last > RX_TIMEOUT) return false;
     }
+    return true;
 }
 
 /* Throw away anything the host sent, until it has been quiet for 100 ms. */
@@ -157,11 +177,26 @@ static void rx_drain(void) {
     while (has_srl && clock() - quiet < CLOCKS_PER_SEC / 10) {
         usb_HandleEvents();
         if (!has_srl) break;
-        if (srl_Read(&srl, rx_buf, sizeof rx_buf) > 0) quiet = clock();
+        if (srl_Read(&srl, PKT_PLAIN, PKT_MAX) > 0) quiet = clock();
     }
 }
 
+static bool set_mode(uint8_t new_bpp) {
+    uint8_t code;
+
+    if (new_bpp == 8) code = LCD_BPP_8;
+    else if (new_bpp == 4) code = LCD_BPP_4;
+    else if (new_bpp == 1) code = LCD_BPP_1;
+    else return false;
+
+    cursor.shown = false; /* whatever was saved under the pointer is meaningless now */
+    bpp = new_bpp;
+    lcd_Control = (lcd_Control & ~(uint24_t)LCD_BPP_MASK) | code;
+    return true;
+}
+
 static void status(const char *line1, const char *line2) {
+    set_mode(8); /* graphx draws 8 bits per pixel */
     gfx_palette[COLOR_BLACK] = gfx_RGBTo1555(0, 0, 0);
     gfx_palette[COLOR_WHITE] = gfx_RGBTo1555(255, 255, 255);
     gfx_FillScreen(COLOR_BLACK);
@@ -174,35 +209,67 @@ static void status(const char *line1, const char *line2) {
     gfx_PrintStringXY("[2nd] + [mode] to quit", 8, 224);
 }
 
-/* One request/response exchange. Returns false if the host went quiet or out of sync. */
-static bool exchange(bool full) {
-    rd_stream_t s = {rx_buf, rx_buf, rx_more};
+static void pointer_hide(void) {
+    cursor_hide(&cursor, FB);
+}
 
-    if (full) {
-        uint8_t hello[2] = {MSG_HELLO, PROTO_VERSION};
-        tx(hello, sizeof hello);
-    } else {
-        tx_byte(MSG_REQ);
-    }
+static void pointer_show(void) {
+    if (cursor_y != CURSOR_HIDDEN) cursor_show(&cursor, FB, bpp, cursor_x, cursor_y);
+}
+
+/* Handle host messages until one fails. Returns only on error, timeout or quit. */
+static void serve(void) {
+    rd_stream_t s;
+    uint8_t hello[2] = {MSG_HELLO, PROTO_VERSION};
+
+    pk_init(&s, rx_exact, PKT_WIRE, PKT_PLAIN);
+    cursor_y = CURSOR_HIDDEN;
+    tx(hello, sizeof hello);
 
     for (;;) {
-        uint8_t type;
-        if (!rd_read(&s, &type, 1)) return false;
+        uint8_t type, arg[3];
+        unsigned int count;
 
-        if (type == MSG_PALETTE) {
-            if (!rd_read(&s, palette_buf, sizeof palette_buf)) return false;
-            gfx_SetPalette(palette_buf, sizeof palette_buf, 0);
-        } else if (type == MSG_FRAME) {
-            return rd_decode_frame(&s, gfx_vram, FB_SIZE);
-        } else {
-            return false;
+        if (!rd_read(&s, &type, 1)) return;
+
+        switch (type) {
+        case MSG_MODE:
+            if (!rd_read(&s, arg, 1) || !set_mode(arg[0])) return;
+            picture = true;
+            break;
+
+        case MSG_PALETTE:
+            if (!rd_read(&s, arg, 1)) return;
+            count = arg[0] ? arg[0] : 256;
+            if (!rd_read(&s, palette_buf, count * 2)) return;
+            gfx_SetPalette(palette_buf, count * 2, 0);
+            break;
+
+        case MSG_FRAME:
+            /* The pointer is lifted off the picture only if the frame changes something. */
+            if (!rd_decode_frame(&s, FB, SCREEN_W * SCREEN_H * bpp / 8,
+                                 SCREEN_W * bpp / 8, pointer_hide))
+                return;
+            pointer_show();
+            tx_byte(MSG_ACK);
+            break;
+
+        case MSG_CURSOR:
+            if (!rd_read(&s, arg, 3)) return;
+            cursor_x = arg[0] | ((unsigned int)arg[1] << 8);
+            cursor_y = arg[2];
+            pointer_hide();
+            pointer_show();
+            break;
+
+        default:
+            return; /* out of sync */
         }
     }
 }
 
 int main(void) {
-    enum { ST_NONE, ST_NO_USB, ST_NO_HOST, ST_LIVE } shown = ST_NONE;
-    bool need_full = true;
+    enum { ST_NONE, ST_NO_USB, ST_NO_HOST } shown = ST_NONE;
 
     gfx_Begin();
 
@@ -225,7 +292,6 @@ int main(void) {
                        "Plug the calculator into the PC.");
                 shown = ST_NO_USB;
             }
-            need_full = true;
             poll_keys();
             continue;
         }
@@ -233,19 +299,21 @@ int main(void) {
         poll_keys();
         if (quit) break;
 
-        if (exchange(need_full)) {
-            need_full = false;
-            shown = ST_LIVE;
-        } else if (!quit) {
-            /* Host missing, stalled, or out of sync: resynchronise from scratch. */
-            if (has_srl && shown != ST_NO_HOST) {
-                status("USB connected. Waiting for host...",
-                       "Run the host program on the PC.");
-                shown = ST_NO_HOST;
-            }
-            rx_drain();
-            need_full = true;
+        /* Runs for as long as the host keeps talking; shows the desktop. */
+        serve();
+        if (quit) break;
+
+        /* Host missing, stalled, or out of sync: resynchronise from scratch. */
+        if (picture) {
+            picture = false;
+            shown = ST_NONE;
         }
+        if (has_srl && shown != ST_NO_HOST) {
+            status("USB connected. Waiting for host...",
+                   "Run the host program on the PC.");
+            shown = ST_NO_HOST;
+        }
+        rx_drain();
     }
 
     if (has_srl) {
@@ -255,6 +323,7 @@ int main(void) {
     }
 
     usb_Cleanup();
+    set_mode(8);
     gfx_End();
     return 0;
 }

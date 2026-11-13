@@ -85,13 +85,18 @@ class Renderer:
         self.grabber = grabber
         self.viewport = viewport
         self.resample = RESAMPLE[resample]
+        self._mapping = None
         try:
             self._font = ImageFont.load_default(size=9)
         except TypeError:  # Pillow < 10.1
             self._font = ImageFont.load_default()
 
-    def render(self, cursor, status=""):
-        """`cursor` is the pointer position in monitor coordinates."""
+    def render(self, cursor, status="", draw_cursor=False):
+        """`cursor` is the pointer position in monitor coordinates.
+
+        The calculator draws its own pointer, so it is only painted into the
+        picture on request (snapshots).
+        """
         (x, y, w, h), (out_w, out_h) = self.viewport.layout(cursor)
         shot = self.grabber.grab(x, y, w, h)
         if shot.size != (out_w, out_h):
@@ -100,6 +105,7 @@ class Renderer:
         canvas = Image.new("RGB", (LCD_W, LCD_H))
         left = (LCD_W - out_w) // 2
         canvas.paste(shot, (left, 0))
+        self._mapping = (x, y, w / out_w, h / out_h, left, out_w, out_h)
 
         if status:
             text = "%s  zoom:%s" % (status, self.viewport.label())
@@ -110,9 +116,23 @@ class Renderer:
             draw.text((2, LCD_H - text_h + 1), text, font=self._font, fill=(255, 255, 255))
 
         frame = np.asarray(canvas).copy()
-        scale_x, scale_y = w / out_w, h / out_h
-        self._draw_cursor(frame, left + (cursor[0] - x) / scale_x, (cursor[1] - y) / scale_y)
+        if draw_cursor:
+            spot = self.to_lcd(cursor)
+            if spot:
+                self._draw_cursor(frame, *spot)
         return frame
+
+    def to_lcd(self, cursor):
+        """Where a monitor position lands on the calculator screen in the most
+        recently rendered view, or None if it is outside the picture."""
+        if self._mapping is None:
+            return None
+        x, y, scale_x, scale_y, left, out_w, out_h = self._mapping
+        cx = int((cursor[0] - x) // scale_x)
+        cy = int((cursor[1] - y) // scale_y)
+        if not (0 <= cx < out_w and 0 <= cy < out_h):
+            return None
+        return left + cx, cy
 
     @staticmethod
     def _draw_cursor(frame, cx, cy):

@@ -96,6 +96,20 @@ def test_mouse_buttons_scroll_and_zoom():
     assert zooms == [1, -1]
 
 
+def test_second_layer_colour_cycle():
+    rec = Recorder()
+    mapper = KeyMapper(rec)
+    cycles = []
+    mapper.on_colors = lambda: cycles.append(1)
+    tap(mapper, "clear")
+    assert rec.events == [("key", "esc", True), ("key", "esc", False)] and not cycles
+    mapper.update(matrix("2nd"))
+    mapper.update(matrix("2nd", "clear"))
+    mapper.update(matrix())
+    assert cycles == [1]
+    assert ("key", "esc", True) not in rec.events[2:]
+
+
 def test_arrows_move_then_glide():
     rec = Recorder()
     mapper = KeyMapper(rec)

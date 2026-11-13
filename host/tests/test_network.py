@@ -17,12 +17,11 @@ from PIL import Image
 from tiremote import net
 from tiremote.inject import NullInjector
 from tiremote.keymap import KeyMapper
-from tiremote.palette import palette_1555
-from tiremote.protocol import LCD_H, LCD_W, MSG_HELLO, MSG_REQ, PROTO_VERSION
+from tiremote.protocol import LCD_H, LCD_W
 from tiremote.session import Session
 from tiremote.view import Renderer, Viewport
 
-from test_end_to_end import FakeCalc
+from fakecalc import FakeCalc
 
 HERE = os.path.dirname(__file__)
 BRIDGE = os.path.join(HERE, "..", "..", "bridge")
@@ -204,26 +203,32 @@ def test_session_over_tcp(compress):
     for target in (pump_down, pump_up):
         threading.Thread(target=target, daemon=True).start()
 
+    def wait_for(predicate, timeout=3.0):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if predicate():
+                return True
+            time.sleep(0.02)
+        return False
+
     calc = FakeCalc(calc_end.fileno())
-    calc.send(MSG_HELLO, PROTO_VERSION)
-    calc.receive_frame()
-    assert calc.palette == palette_1555()
+    calc.hello()
+    assert wait_for(lambda: calc.frames >= 1 and "session" in done)
     session = done["session"]
-    assert (calc.fb == session._render()).all()
+
+    def in_sync():
+        return calc.error is None and (calc.fb == session.shown).all()
+
+    assert wait_for(in_sync)
     screen = calc.fb.reshape(LCD_H, LCD_W)
     assert screen[100, 10] != screen[100, 200]
+    assert calc.cursor == (160, 120)
 
     calc.keys("right")  # moves the (virtual, view-only) pointer
-    deadline = time.monotonic() + 3
-    while injector.position()[0] <= 320 and time.monotonic() < deadline:
-        time.sleep(0.02)
-    assert injector.position()[0] > 320
+    assert wait_for(lambda: injector.position()[0] > 320)
     calc.keys()
-    time.sleep(0.1)
-    for _ in range(2):
-        calc.send(MSG_REQ)
-        calc.receive_frame()
-    assert (calc.fb == session._render()).all()
+    assert wait_for(lambda: calc.cursor[0] > 160 and in_sync())
+    calc.close()
 
     # Dropping the connection ends the session cleanly.
     sock.shutdown(socket.SHUT_RDWR)

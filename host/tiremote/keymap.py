@@ -11,7 +11,8 @@ Action strings:
   "shift"              Shift: held while the key is held
   "alpha"              toggle the letter layer
   "arrows"             toggle the arrow keys between mouse movement and arrow keys
-  "zoom"               zoom in one level ([2nd] + key zooms out)
+  "zoom" / "zoom_out"  zoom in / out one level
+  "colors"             cycle 256 colours -> 16 greys -> black and white
 """
 
 import threading
@@ -68,6 +69,12 @@ ALPHA_LAYER = {
     "0": " ", ".": ":", "(-)": "?",
 }
 
+# Keys that do something else entirely while [2nd] is held.
+SECOND_LAYER = {
+    "zoom": "zoom_out",
+    "clear": "colors",
+}
+
 # What Shift does to a typed character (US layout).
 SHIFTED = {
     "1": "!", "2": "@", "3": "#", "4": "$", "5": "%", "6": "^", "7": "&",
@@ -89,12 +96,14 @@ class KeyMapper:
     """Stateful keypad -> input translator. Thread-safe.
 
     `backend` needs: key(name_or_char, down), button(name, down),
-    scroll(dy), move(dx, dy). `on_zoom(step)` is called with +1 / -1.
+    scroll(dy), move(dx, dy). `on_zoom(step)` is called with +1 / -1 and
+    `on_colors()` when the colour mode should change.
     """
 
     def __init__(self, backend, on_zoom=None, normal=None, alpha=None):
         self.backend = backend
         self.on_zoom = on_zoom or (lambda step: None)
+        self.on_colors = lambda: None
         self.normal = dict(NORMAL_LAYER if normal is None else normal)
         self.alpha_layer = dict(ALPHA_LAYER if alpha is None else alpha)
         self.alpha = False
@@ -135,6 +144,8 @@ class KeyMapper:
             self._dirs.clear()
 
     def _action(self, name):
+        if self._shift and name in SECOND_LAYER:
+            return SECOND_LAYER[name]
         if self.alpha and name in self.alpha_layer:
             return self.alpha_layer[name]
         return self.normal.get(name)
@@ -162,8 +173,10 @@ class KeyMapper:
         elif action == "arrows":
             if not self._shift:  # [2nd] + [mode] quits the calculator program
                 self.arrows_are_keys = not self.arrows_are_keys
-        elif action == "zoom":
-            self.on_zoom(-1 if self._shift else 1)
+        elif action in ("zoom", "zoom_out"):
+            self.on_zoom(1 if action == "zoom" else -1)
+        elif action == "colors":
+            self.on_colors()
         elif action.startswith("key:"):
             held = ("key", action[4:])
             self.backend.key(held[1], True)

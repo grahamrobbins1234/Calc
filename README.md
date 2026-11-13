@@ -70,7 +70,9 @@ a different order, or unplug and replug, both sides reconnect on their own.
 | `--monitor N` | which monitor to share (1 = primary, 0 = all of them) |
 | `--fps N` | frame rate cap (default 20) |
 | `--view-only` | show the screen but ignore the calculator's keys |
+| `--colors N` | starting colour mode: `256` (default), `16` greys or `2` (black and white) |
 | `--dither` | dithered colours: smoother gradients, more data per frame |
+| `--no-lz4` | do not LZ4-compress the stream (if the calculator turns out faster without) |
 | `--filter NAME` | downscaling filter: `lanczos` (default), `bilinear`, `box`, `nearest` |
 | `--listen [PORT]` | network mode: wait for the [Wi-Fi bridge](bridge/README.md) instead of a cable (needs `--key` or `TIREMOTE_KEY`) |
 | `--port NAME` | use a specific serial port instead of auto-detecting |
@@ -93,8 +95,12 @@ Platform notes:
 A whole desktop does not fit legibly in 320x240, so the view zooms: **fit**
 shows everything, and each press of `[zoom]` moves closer until one screen
 pixel is one calculator pixel. Zoomed views follow the mouse pointer. The
-status line in the bottom-left corner shows the current layer, arrow mode and
-zoom.
+status line in the bottom-left corner shows the current layer, arrow mode,
+colour mode and zoom.
+
+If updates feel slow, drop the colour depth with `[2nd]`+`[clear]`: 16 greys
+sends half the data of 256 colours and black-and-white an eighth, and text
+stays readable in both.
 
 | Calculator key | Action |
 | --- | --- |
@@ -104,6 +110,7 @@ zoom.
 | `[sto→]` | Middle mouse button |
 | `[trace]` / `[graph]` | Scroll up / down |
 | `[zoom]` | Zoom in; `[2nd]`+`[zoom]` zooms out |
+| `[2nd]`+`[clear]` | Cycle colour mode: 256 colours → 16 greys → black and white |
 | `[mode]` | Switch the arrows between mouse movement and the arrow keys |
 | `[alpha]` | Toggle the letter layer (the green letters above the keys) |
 | `[2nd]` | Shift (hold) |
@@ -128,17 +135,35 @@ To change any of this, edit the two dictionaries at the top of
 
 - **Transport:** `srldrvce` makes the calculator a USB CDC ACM device
   (VID `16C0`, PID `05E1`). Baud rate is irrelevant.
-- **Flow control:** the calculator asks for each frame (`REQ`), so frames
-  never queue up and the picture is always the newest one. If a reply stops
-  arriving for 1.5 s the calculator drains its input and sends `HELLO`, which
-  makes the host resend the palette and a full frame. That one rule handles
+- **Flow control:** the host may have two frames sent but not yet
+  acknowledged, so one frame travels while the calculator draws the previous
+  one, and nothing piles up beyond that. When the screen is idle the host
+  sends an empty frame twice a second as a heartbeat.
+- **Recovery:** if the calculator hears nothing for 1.5 s, or receives
+  anything invalid, it drains its input and sends `HELLO`; the host answers
+  with the screen mode, the palette and a full frame. That one rule handles
   startup order, replugging and corrupted data.
-- **Frames:** 320x240, 8 bits per pixel, fixed palette (a 6x8x5 colour cube
-  plus 16 greys). Each frame is a list of `skip` / `fill` / `copy` operations
-  against the previous frame, which the calculator decodes with nothing more
-  than `memset` and `memcpy`. A static screen costs 2 bytes per frame.
+- **Frames:** 320x240 at 8, 4 or 1 bits per pixel. Each frame is a list of
+  `skip` / `fill` / `copy` operations against the previous frame, plus
+  `move` operations that shift a block of rows when the host detects
+  scrolling, so a scrolled page only costs the newly exposed strip.
+- **Compression:** host data travels in packets of up to 8 KB, each
+  LZ4-compressed when that makes it smaller. The packet buffers live in the
+  unused half of the calculator's video memory.
+- **Pointer:** the calculator draws the mouse pointer itself. The host sends
+  its position as a 4-byte message whenever it moves, independent of frames,
+  so moving the mouse costs no picture data.
 - **Input:** the calculator sends its 7-byte key matrix whenever it changes.
   Pointer acceleration, key repeat, layers and zoom all live in the host.
+
+Measured on a real browser window being scrolled (1:2 zoom, average bytes
+per changed frame, PC side only — the calculator's speed is still unmeasured):
+
+| Colour mode | Plain delta | + scroll moves | + LZ4 |
+| --- | --- | --- | --- |
+| 256 colours | 17.6 KB | 5.1 KB | 3.9 KB |
+| 16 greys | 9.4 KB | 2.7 KB | 2.6 KB |
+| Black and white | 2.1 KB | 0.6 KB | 0.6 KB |
 
 The protocol constants are in `calc/src/proto.h` (mirrored in
 `host/tiremote/protocol.py`).
@@ -154,15 +179,22 @@ xvfb-run -a python -m pytest tests     # Linux; the end-to-end tests need an X d
 Set `MINIZ_DIR` to a checkout of [miniz](https://github.com/richgel999/miniz)
 to also run the tests that compile the bridge's protocol code natively.
 
-`calc/src/decode.c` is deliberately free of calculator headers so the tests
-can compile it natively and check it against the Python encoder.
+`calc/src/decode.c` (frame decoder, packet reader, LZ4, pointer drawing) is
+deliberately free of calculator headers so the tests can compile it natively,
+with sanitizers on, and check it against the Python side.
 
 ## Limits worth knowing
 
 - Frame rate depends on how much of the screen changes: USB full-speed serial
   and a 48 MHz eZ80 manage smooth updates for typing and pointer movement,
   but full-screen video will be a slideshow.
-- The pointer is drawn by the host; the calculator has no local cursor, so it
-  moves at the frame rate.
+- The pointer disappears briefly while a large update is being drawn under
+  it.
+- In the 16-grey and black-and-white modes the order of pixels within each
+  byte is taken from the LCD controller's documentation and has not been
+  seen on a real screen. If those modes look scrambled in vertical stripes,
+  that is the cause; please report it.
+- The calculator program and the host must be the same protocol version; the
+  host says so if they are not.
 - The calculator has no Wi-Fi or Bluetooth of its own; going wireless needs
   the ESP32 bridge in [`bridge/`](bridge/README.md).

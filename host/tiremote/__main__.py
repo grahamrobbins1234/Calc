@@ -50,6 +50,11 @@ def parse_args(argv=None):
     parser.add_argument("--monitor", type=int, default=1,
                         help="monitor to share: 1 = primary, 2.. = others, 0 = all (default: 1)")
     parser.add_argument("--fps", type=float, default=20, help="maximum frames per second")
+    parser.add_argument("--colors", choices=["256", "16", "2"], default="256",
+                        help="starting colour mode: 256 colours, 16 greys (half the data) or "
+                             "2 = black and white (an eighth); [2nd]+[clear] cycles it")
+    parser.add_argument("--no-lz4", action="store_true",
+                        help="do not LZ4-compress data for the calculator")
     parser.add_argument("--dither", action="store_true",
                         help="dither colours (smoother gradients, slower updates)")
     parser.add_argument("--filter", choices=sorted(RESAMPLE), default="lanczos",
@@ -83,7 +88,7 @@ def main(argv=None):
     import serial
 
     from .capture import MssGrabber
-    from .palette import palette_rgb, quantize
+    from .palette import MODES
     from .session import Session
 
     grabber = MssGrabber(args.monitor)
@@ -97,8 +102,10 @@ def main(argv=None):
         from PIL import Image
 
         px, py = injector.position()
-        rgb = renderer.render((px - origin[0], py - origin[1]), mapper.status())
-        Image.fromarray(palette_rgb()[quantize(rgb, args.dither)]).save(args.snapshot)
+        mode = MODES[args.colors]
+        rgb = renderer.render((px - origin[0], py - origin[1]),
+                              "%s  %sc" % (mapper.status(), mode.name), draw_cursor=True)
+        Image.fromarray(mode.to_rgb(mode.pack(rgb, args.dither))).save(args.snapshot)
         print("Saved %s" % args.snapshot)
         return 0
 
@@ -153,7 +160,8 @@ def main(argv=None):
             waiting_shown = False
             print("Connected: %s." % label)
             session = Session(port, renderer, injector, mapper, origin,
-                              fps=args.fps, dither=args.dither)
+                              fps=args.fps, dither=args.dither, colors=args.colors,
+                              lz4=not args.no_lz4)
             started = time.monotonic()
             try:
                 error = session.run()
