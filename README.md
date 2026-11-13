@@ -19,6 +19,12 @@ only the pixels that changed. The calculator sends its raw key state and the
 host decides what each key means, so the key map is editable without
 rebuilding the calculator program.
 
+There are two ways to connect, using the same calculator program:
+
+- **USB cable** straight to the computer — described on this page.
+- **Wi-Fi**, through an ESP32-S3 plugged into the calculator's USB port — see
+  [`bridge/`](bridge/README.md).
+
 > **Status:** the host is covered by automated tests (including an end-to-end
 > run against a simulated calculator), and the calculator's frame decoder is
 > tested natively against the host's encoder. The calculator program has not
@@ -66,6 +72,7 @@ a different order, or unplug and replug, both sides reconnect on their own.
 | `--view-only` | show the screen but ignore the calculator's keys |
 | `--dither` | dithered colours: smoother gradients, more data per frame |
 | `--filter NAME` | downscaling filter: `lanczos` (default), `bilinear`, `box`, `nearest` |
+| `--listen [PORT]` | network mode: wait for the [Wi-Fi bridge](bridge/README.md) instead of a cable (needs `--key` or `TIREMOTE_KEY`) |
 | `--port NAME` | use a specific serial port instead of auto-detecting |
 | `--list-ports` | show serial ports and which one is the calculator |
 | `--snapshot FILE` | save a picture of what the calculator would show, then exit |
@@ -144,6 +151,9 @@ pip install -r requirements.txt pytest
 xvfb-run -a python -m pytest tests     # Linux; the end-to-end tests need an X display
 ```
 
+Set `MINIZ_DIR` to a checkout of [miniz](https://github.com/richgel999/miniz)
+to also run the tests that compile the bridge's protocol code natively.
+
 `calc/src/decode.c` is deliberately free of calculator headers so the tests
 can compile it natively and check it against the Python encoder.
 
@@ -154,5 +164,5 @@ can compile it natively and check it against the Python encoder.
   but full-screen video will be a slideshow.
 - The pointer is drawn by the host; the calculator has no local cursor, so it
   moves at the frame rate.
-- Only the cable is supported. There is no Wi-Fi or Bluetooth on the
-  calculator to connect over.
+- The calculator has no Wi-Fi or Bluetooth of its own; going wireless needs
+  the ESP32 bridge in [`bridge/`](bridge/README.md).

@@ -1,6 +1,7 @@
 """Command line entry point: python -m tiremote"""
 
 import argparse
+import os
 import sys
 import time
 
@@ -40,6 +41,12 @@ def parse_args(argv=None):
                     "TI-84 Plus CE running the REMOTE program over USB.")
     parser.add_argument("--port", help="serial port of the calculator (default: auto-detect)")
     parser.add_argument("--list-ports", action="store_true", help="list serial ports and exit")
+    parser.add_argument("--listen", metavar="[ADDR:]PORT", nargs="?", const="",
+                        help="network mode: wait for a Wi-Fi bridge to connect "
+                             "(default port 8484) instead of using a USB cable")
+    parser.add_argument("--key", help="shared key for --listen (or set TIREMOTE_KEY)")
+    parser.add_argument("--no-compress", action="store_true",
+                        help="with --listen: do not compress the stream to the bridge")
     parser.add_argument("--monitor", type=int, default=1,
                         help="monitor to share: 1 = primary, 2.. = others, 0 = all (default: 1)")
     parser.add_argument("--fps", type=float, default=20, help="maximum frames per second")
@@ -95,35 +102,60 @@ def main(argv=None):
         print("Saved %s" % args.snapshot)
         return 0
 
+    listener = None
+    if args.listen is not None:
+        from .net import Listener, parse_listen
+
+        key = args.key or os.environ.get("TIREMOTE_KEY", "")
+        if len(key) < 8:
+            sys.exit("--listen needs a shared key of at least 8 characters "
+                     "(--key or the TIREMOTE_KEY environment variable).")
+        address, tcp_port = parse_listen(args.listen)
+        listener = Listener(address, tcp_port, key, compress=not args.no_compress)
+
     print("Sharing monitor %d (%dx%d). Press Ctrl+C to stop."
           % (args.monitor, grabber.width, grabber.height))
+    if listener:
+        print("Waiting for the Wi-Fi bridge on port %d. The stream is not encrypted: "
+              "use it on a network you trust." % listener.port)
+
+    def connect_serial(quiet):
+        """Open the calculator's USB serial port, or explain (once) why not."""
+        port_name = args.port or find_port()
+        if port_name is None:
+            if not quiet:
+                print("Waiting for the calculator: plug it in and run REMOTE "
+                      "(prgmREMOTE, or via Cesium/arTIfiCE)...")
+            return None
+        try:
+            port = serial.Serial(port_name, 115200, timeout=0.2, write_timeout=2.0)
+            port.reset_input_buffer()
+        except (serial.SerialException, OSError) as exc:
+            if not quiet:
+                print("Cannot open %s: %s" % (port_name, exc))
+            return None
+        return port, port_name
+
     waiting_shown = False
     try:
         while True:
-            port_name = args.port or find_port()
-            if port_name is None:
-                if not waiting_shown:
-                    print("Waiting for the calculator: plug it in and run REMOTE "
-                          "(prgmREMOTE, or via Cesium/arTIfiCE)...")
+            if listener:
+                link = listener.accept()
+            else:
+                link = connect_serial(waiting_shown)
+                if link is None:
                     waiting_shown = True
-                time.sleep(1.0)
-                continue
-            try:
-                port = serial.Serial(port_name, 115200, timeout=0.2, write_timeout=2.0)
-            except (serial.SerialException, OSError) as exc:
-                if not waiting_shown:
-                    print("Cannot open %s: %s" % (port_name, exc))
-                    waiting_shown = True
-                time.sleep(1.0)
+                    time.sleep(1.0)
+            if link is None:
                 continue
 
+            port, label = link
             waiting_shown = False
-            print("Opened %s." % port_name)
+            print("Connected: %s." % label)
             session = Session(port, renderer, injector, mapper, origin,
                               fps=args.fps, dither=args.dither)
             started = time.monotonic()
             try:
-                port.reset_input_buffer()
                 error = session.run()
             finally:
                 session.stop()
@@ -132,10 +164,12 @@ def main(argv=None):
                 except Exception:
                     pass
             elapsed = max(time.monotonic() - started, 1e-6)
+            sent = getattr(port, "wire_bytes", session.bytes_sent)
             print("Disconnected (%s). %d frames, %.1f fps, %.0f KB/s average."
                   % (error or "stopped", session.frames, session.frames / elapsed,
-                     session.bytes_sent / elapsed / 1024))
-            time.sleep(1.0)
+                     sent / elapsed / 1024))
+            if not listener:
+                time.sleep(1.0)
     except KeyboardInterrupt:
         print("\nStopped.")
         mapper.release_all()

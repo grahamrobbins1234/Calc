@@ -34,5 +34,28 @@ jobs:
         run: |
           sudo apt-get update && sudo apt-get install -y xvfb
           pip install -r host/requirements.txt pytest
+          git clone --depth 1 https://github.com/richgel999/miniz "$RUNNER_TEMP/miniz"
       - name: Test
+        env:
+          MINIZ_DIR: ${{ runner.temp }}/miniz
         run: xvfb-run -a -s "-screen 0 1280x720x24" python -m pytest -q host/tests
+
+  bridge:
+    name: Wi-Fi bridge firmware (ESP32-S3)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v6.1
+          target: esp32s3
+          path: bridge
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bridge-firmware-default-config
+          path: |
+            bridge/build/ti84_bridge.bin
+            bridge/build/bootloader/bootloader.bin
+            bridge/build/partition_table/partition-table.bin
+          if-no-files-found: error

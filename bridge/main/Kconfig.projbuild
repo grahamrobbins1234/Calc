@@ -1,0 +1,30 @@
+menu "TI-84 remote desktop bridge"
+
+    config BRIDGE_WIFI_SSID
+        string "Wi-Fi network name (SSID)"
+        default "my-wifi"
+
+    config BRIDGE_WIFI_PASSWORD
+        string "Wi-Fi password"
+        default "my-password"
+
+    config BRIDGE_HOST
+        string "Computer to connect to (IP address or host name)"
+        default "192.168.1.10"
+        help
+            The computer running "python -m tiremote --listen".
+
+    config BRIDGE_PORT
+        int "TCP port"
+        range 1 65535
+        default 8484
+
+    config BRIDGE_KEY
+        string "Shared key"
+        default "change-me"
+        help
+            Must match the key given to the host program (--key or the
+            TIREMOTE_KEY environment variable). The host refuses bridges
+            that do not know it.
+
+endmenu
