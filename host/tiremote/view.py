@@ -24,6 +24,13 @@ _CURSOR = (
 )
 _CURSOR_ART = np.array([[".X#".index(c) for c in row] for row in _CURSOR])
 
+# How to turn the upright picture for each clockwise rotation.
+_TURN = {
+    90: Image.Transpose.ROTATE_270,
+    180: Image.Transpose.ROTATE_180,
+    270: Image.Transpose.ROTATE_90,
+}
+
 RESAMPLE = {
     "nearest": Image.Resampling.NEAREST,
     "box": Image.Resampling.BOX,
@@ -39,13 +46,16 @@ class Viewport:
     top-left corner), in the units the OS uses for pointer positions.
     """
 
-    def __init__(self, width, height):
+    def __init__(self, width, height, rotation=0):
         self.width, self.height = width, height
-        fit = max(width / LCD_W, height / LCD_H)
+        # With the calculator held sideways the picture area is 240 wide, 320 tall.
+        self.rotation = rotation
+        self.lcd_w, self.lcd_h = (LCD_H, LCD_W) if rotation in (90, 270) else (LCD_W, LCD_H)
+        fit = max(width / self.lcd_w, height / self.lcd_h)
         self.scales = [fit] + [s for s in ZOOM_SCALES if s < fit * 0.8]
         self.level = 0
         self._origin = [0.0, 0.0]
-        self.x_step = 1  # calculator pixels per framebuffer byte (8, 2 or 1)
+        self.x_step = self.y_step = 1  # pan granularity, in picture pixels
 
     @property
     def scale(self):
@@ -63,8 +73,8 @@ class Viewport:
         """Returns (region, out_size): the screen rectangle (x, y, w, h) to
         capture and the size it should be drawn at on the calculator."""
         scale = self.scale
-        out_w = min(LCD_W, max(1, round(self.width / scale)))
-        out_h = min(LCD_H, max(1, round(self.height / scale)))
+        out_w = min(self.lcd_w, max(1, round(self.width / scale)))
+        out_h = min(self.lcd_h, max(1, round(self.height / scale)))
         reg_w = min(self.width, round(out_w * scale))
         reg_h = min(self.height, round(out_h * scale))
 
@@ -78,10 +88,10 @@ class Viewport:
 
         # Pan in whole calculator pixels, so a panned picture is the old one
         # shifted exactly and can be moved on the calculator instead of resent.
-        # Sideways, that also has to be whole framebuffer bytes (x_step pixels).
+        # Along framebuffer rows that also has to be whole bytes (x_step / y_step).
         step = scale if float(scale).is_integer() else 1
         x = int(self._origin[0] // (step * self.x_step) * (step * self.x_step))
-        y = int(self._origin[1] // step * step)
+        y = int(self._origin[1] // (step * self.y_step) * (step * self.y_step))
         return (x, y, reg_w, reg_h), (out_w, out_h)
 
 
@@ -110,8 +120,9 @@ class Renderer:
         if shot.size != (out_w, out_h):
             shot = shot.resize((out_w, out_h), self.resample, reducing_gap=2.0)
 
-        canvas = Image.new("RGB", (LCD_W, LCD_H))
-        left = (LCD_W - out_w) // 2
+        view_w, view_h = self.viewport.lcd_w, self.viewport.lcd_h
+        canvas = Image.new("RGB", (view_w, view_h))
+        left = (view_w - out_w) // 2
         canvas.paste(shot, (left, 0))
         self._mapping = (x, y, w / out_w, h / out_h, left, out_w, out_h)
         self.mapping = self._mapping
@@ -121,15 +132,47 @@ class Renderer:
             draw = ImageDraw.Draw(canvas)
             box = draw.textbbox((0, 0), text, font=self._font)
             text_w, text_h = box[2] + 4, box[3] + 3
-            draw.rectangle([0, LCD_H - text_h, text_w, LCD_H], fill=(0, 0, 0))
-            draw.text((2, LCD_H - text_h + 1), text, font=self._font, fill=(255, 255, 255))
+            draw.rectangle([0, view_h - text_h, text_w, view_h], fill=(0, 0, 0))
+            draw.text((2, view_h - text_h + 1), text, font=self._font, fill=(255, 255, 255))
 
+        if self.viewport.rotation:
+            canvas = canvas.transpose(_TURN[self.viewport.rotation])
         frame = np.asarray(canvas).copy()
         if draw_cursor:
             spot = self.to_lcd(cursor)
             if spot:
                 self._draw_cursor(frame, *spot)
         return frame
+
+    def _turn_point(self, px, py):
+        """A pixel of the upright picture -> where it is in the framebuffer."""
+        view_w, view_h = self.viewport.lcd_w, self.viewport.lcd_h
+        rotation = self.viewport.rotation
+        if rotation == 90:
+            return view_h - 1 - py, px
+        if rotation == 180:
+            return view_w - 1 - px, view_h - 1 - py
+        if rotation == 270:
+            return py, view_w - 1 - px
+        return px, py
+
+    def turn_vector(self, dx, dy):
+        """A movement in the upright picture -> the same movement in the framebuffer."""
+        rotation = self.viewport.rotation
+        if rotation == 90:
+            return -dy, dx
+        if rotation == 180:
+            return -dx, -dy
+        if rotation == 270:
+            return dy, -dx
+        return dx, dy
+
+    def picture_rect(self, mapping):
+        """Framebuffer rectangle (x0, y0, x1, y1) the desktop picture occupies."""
+        _, _, _, _, left, out_w, out_h = mapping
+        ax, ay = self._turn_point(left, 0)
+        bx, by = self._turn_point(left + out_w - 1, out_h - 1)
+        return min(ax, bx), min(ay, by), max(ax, bx) + 1, max(ay, by) + 1
 
     def to_lcd(self, cursor):
         """Where a monitor position lands on the calculator screen in the most
@@ -141,7 +184,7 @@ class Renderer:
         cy = int((cursor[1] - y) // scale_y)
         if not (0 <= cx < out_w and 0 <= cy < out_h):
             return None
-        return left + cx, cy
+        return self._turn_point(left + cx, cy)
 
     @staticmethod
     def _draw_cursor(frame, cx, cy):

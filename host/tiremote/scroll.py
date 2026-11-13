@@ -74,12 +74,12 @@ def find_scroll(new, old):
     return x0, y0 + lo + start - dy, x1 - x0, length, 0, dy
 
 
-def pan_move(shift_x, shift_y, left, width, height, bpp):
+def pan_move(shift_x, shift_y, rect, bpp):
     """The move for a picture that slid as a whole (the view panned).
 
-    The picture occupies pixel columns [left, left+width) and rows [0, height)
-    and its content moved by (shift_x, shift_y) pixels. Returns a move in
-    framebuffer bytes, or None if the shift cannot be expressed as one.
+    The picture occupies the framebuffer pixel rectangle `rect` = (x0, y0,
+    x1, y1) and its content moved by (shift_x, shift_y) pixels. Returns a
+    move in framebuffer bytes, or None if the shift cannot be expressed as one.
     """
     if not (shift_x or shift_y) or (shift_x * bpp) % 8:
         return None
@@ -87,10 +87,10 @@ def pan_move(shift_x, shift_y, left, width, height, bpp):
     if abs(dx) > MAX_SHIFT or abs(shift_y) > MAX_SHIFT:
         return None
     # Source area: the part of the picture that is still visible after the shift.
-    x0 = left + max(0, -shift_x)
-    x1 = left + width - max(0, shift_x)
-    y0 = max(0, -shift_y)
-    y1 = height - max(0, shift_y)
+    x0 = rect[0] + max(0, -shift_x)
+    x1 = rect[2] - max(0, shift_x)
+    y0 = rect[1] + max(0, -shift_y)
+    y1 = rect[3] - max(0, shift_y)
     xb0 = -(-x0 * bpp // 8)  # round inwards to whole bytes
     xb1 = x1 * bpp // 8
     if xb1 - xb0 < 4 or y1 - y0 < 4:

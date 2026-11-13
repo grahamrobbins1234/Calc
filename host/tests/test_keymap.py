@@ -160,3 +160,59 @@ def test_viewport_fit_and_follow():
     assert view.level == 0
     small = Viewport(320, 240)
     assert small.scales == [1.0]
+
+
+def test_rotated_arrows():
+    for rotation, physical, expected in [(0, "up", (0, -1)), (90, "right", (0, -1)),
+                                         (90, "down", (1, 0)), (180, "down", (0, -1)),
+                                         (270, "left", (0, -1)), (270, "up", (1, 0))]:
+        rec = Recorder()
+        mapper = KeyMapper(rec)
+        mapper.rotation = rotation
+        mapper.update(matrix(physical), now=0.0)
+        mapper.update(matrix(), now=0.01)
+        assert rec.events == [("move",) + expected], (rotation, physical)
+    # In arrow-key mode the turned key presses the turned arrow, and releases it.
+    rec = Recorder()
+    mapper = KeyMapper(rec)
+    mapper.rotation = 90
+    tap(mapper, "mode")
+    tap(mapper, "right")
+    assert rec.events == [("key", "up", True), ("key", "up", False)]
+
+
+def test_rotated_picture_and_pointer_agree():
+    import numpy as np
+    from PIL import Image
+
+    from tiremote.view import Renderer
+
+    class Desk:
+        left = top = 0
+        width, height = 480, 640  # a portrait desktop, 2 px per calculator pixel sideways
+
+        def __init__(self):
+            self.image = Image.new("RGB", (self.width, self.height), (10, 20, 30))
+            self.marks = {(100, 50): (255, 0, 0), (400, 600): (0, 255, 0), (30, 500): (0, 0, 255)}
+            for (x, y), colour in self.marks.items():  # 16x16 blocks around each spot
+                self.image.paste(colour, (x - 8, y - 8, x + 8, y + 8))
+
+        def grab(self, x, y, w, h):
+            return self.image.crop((x, y, x + w, y + h))
+
+    desk = Desk()
+    for rotation in (0, 90, 180, 270):
+        view = Viewport(desk.width, desk.height, rotation)
+        renderer = Renderer(desk, view, "nearest")
+        frame = renderer.render((240, 320))
+        assert frame.shape == (240, 320, 3)
+        if rotation in (90, 270):
+            assert view.scales[0] == 2.0  # the portrait desktop fills the sideways screen
+            assert (frame != 0).any(axis=2).all()
+        for spot, colour in desk.marks.items():
+            x, y = renderer.to_lcd(spot)
+            assert frame[y, x].tolist() == list(colour), (rotation, spot)
+        # Moving right on the desktop moves the way turn_vector says on the calculator.
+        ax, ay = renderer.to_lcd((100, 100))
+        bx, by = renderer.to_lcd((100 + 2 * view.scale, 100))
+        assert (bx - ax, by - ay) == tuple(2 * v for v in renderer.turn_vector(1, 0))

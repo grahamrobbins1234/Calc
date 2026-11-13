@@ -49,6 +49,9 @@ def parse_args(argv=None):
                         help="with --listen: do not compress the stream to the bridge")
     parser.add_argument("--monitor", type=int, default=1,
                         help="monitor to share: 1 = primary, 2.. = others, 0 = all (default: 1)")
+    parser.add_argument("--rotate", type=int, choices=[0, 90, 180, 270], default=0,
+                        help="turn the picture clockwise by this many degrees, for holding "
+                             "the calculator sideways; the arrow keys turn with it")
     parser.add_argument("--fps", type=float, default=20, help="maximum frames per second")
     parser.add_argument("--colors", choices=["256", "16", "2"], default="256",
                         help="starting colour mode: 256 colours, 16 greys (half the data) or "
@@ -96,10 +99,11 @@ def main(argv=None):
     from .session import Session
 
     grabber = MssGrabber(args.monitor)
-    viewport = Viewport(grabber.width, grabber.height)
+    viewport = Viewport(grabber.width, grabber.height, args.rotate)
     renderer = Renderer(grabber, viewport, args.filter)
     injector = make_injector(args, grabber)
     mapper = KeyMapper(injector, on_zoom=viewport.zoom)
+    mapper.rotation = args.rotate
     origin = (grabber.left, grabber.top)
 
     if args.snapshot:

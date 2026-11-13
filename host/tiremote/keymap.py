@@ -86,6 +86,14 @@ SHIFTED = {
 
 ARROWS = ("up", "down", "left", "right")
 
+# With the picture rotated the calculator is held turned, so the arrow keys
+# point somewhere else. Clockwise picture rotation -> {physical key: direction}.
+TURNED_ARROWS = {
+    90: {"right": "up", "down": "right", "left": "down", "up": "left"},
+    180: {"down": "up", "left": "right", "up": "down", "right": "left"},
+    270: {"left": "up", "up": "right", "right": "down", "down": "left"},
+}
+
 # Mouse feel, in calculator pixels (multiplied by the current zoom scale).
 MOVE_DELAY = 0.18  # seconds an arrow is held before the pointer starts gliding
 MOVE_MIN_SPEED = 30.0  # px/s when the glide starts
@@ -111,6 +119,7 @@ class KeyMapper:
         self.alpha_layer = dict(ALPHA_LAYER if alpha is None else alpha)
         self.alpha = False
         self.arrows_are_keys = False
+        self.rotation = 0  # clockwise rotation of the picture on the calculator
         self.scale = 1.0  # screen pixels per calculator pixel
         self._lock = threading.Lock()
         self._matrix = bytes(7)
@@ -133,6 +142,7 @@ class KeyMapper:
             for name, (group, bit) in KEY_BITS.items():
                 was = old[group] >> bit & 1
                 is_down = matrix[group] >> bit & 1
+                name = TURNED_ARROWS.get(self.rotation, {}).get(name, name)
                 if is_down and not was:
                     self._press(name, now)
                 elif was and not is_down:

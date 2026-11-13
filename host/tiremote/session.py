@@ -182,7 +182,10 @@ class Session:
             self._cursor_sent = spot
 
     def _render(self):
-        self.renderer.viewport.x_step = max(1, 8 // self.mode.bpp)
+        viewport = self.renderer.viewport
+        byte_step = max(1, 8 // self.mode.bpp)  # pans along framebuffer rows go in whole bytes
+        sideways = viewport.rotation in (90, 270)
+        viewport.x_step, viewport.y_step = (1, byte_step) if sideways else (byte_step, 1)
         status = "%s  %sc  video:%s" % (self.mapper.status(), self.mode.name, self.video)
         rgb = self.renderer.render(self._pointer(), status)
         return self.mode.pack(rgb, self.dither)
@@ -196,8 +199,8 @@ class Session:
         shift_y = (old[1] - mapping[1]) / mapping[3]
         if not (shift_x.is_integer() and shift_y.is_integer()):
             return None
-        return pan_move(int(shift_x), int(shift_y), mapping[4], mapping[5], mapping[6],
-                        self.mode.bpp)
+        turned = self.renderer.turn_vector(int(shift_x), int(shift_y))
+        return pan_move(*turned, self.renderer.picture_rect(mapping), self.mode.bpp)
 
     def _encode(self, frame, mapping=None):
         """Frame message taking the calculator from self.shown to `frame`."""

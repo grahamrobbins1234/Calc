@@ -173,8 +173,10 @@ class _Desktop:
         return self.image.crop((x, y, x + w, y + h))
 
 
-@pytest.mark.parametrize("name,scale", [("256", 1), ("256", 2), ("16", 1), ("16", 2), ("2", 1)])
-def test_panning_the_view_shifts_instead_of_resending(harness, name, scale):
+@pytest.mark.parametrize("name,scale,rotation", [
+    ("256", 1, 0), ("256", 2, 0), ("16", 1, 0), ("16", 2, 0), ("2", 1, 0),
+    ("256", 1, 90), ("256", 2, 270), ("16", 1, 180), ("2", 1, 90), ("16", 1, 270)])
+def test_panning_the_view_shifts_instead_of_resending(harness, name, scale, rotation):
     """Moving the pointer around a zoomed view: the session's own encoder,
     checked on the calculator's C code."""
     from tiremote.inject import NullInjector
@@ -183,7 +185,7 @@ def test_panning_the_view_shifts_instead_of_resending(harness, name, scale):
     from tiremote.view import Renderer, Viewport
 
     grabber = _Desktop()
-    viewport = Viewport(grabber.width, grabber.height)
+    viewport = Viewport(grabber.width, grabber.height, rotation)
     viewport.level = viewport.scales.index(scale)  # screen pixels per calculator pixel
     injector = NullInjector((800, 600))
     session = Session(None, Renderer(grabber, viewport, "nearest"), injector,

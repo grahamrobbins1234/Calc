@@ -68,6 +68,7 @@ a different order, or unplug and replug, both sides reconnect on their own.
 | Option | |
 | --- | --- |
 | `--monitor N` | which monitor to share (1 = primary, 0 = all of them) |
+| `--rotate DEG` | turn the picture 90, 180 or 270 degrees clockwise, for holding the calculator sideways; the arrow keys turn with it |
 | `--fps N` | frame rate cap (default 20) |
 | `--view-only` | show the screen but ignore the calculator's keys |
 | `--colors N` | starting colour mode: `256` (default), `16` greys or `2` (black and white) |
