@@ -1,0 +1,6 @@
+calc/bin/
+calc/obj/
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/

@@ -1,0 +1,38 @@
+name: Build
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  calculator:
+    name: Calculator program (REMOTE.8xp)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install CE C toolchain
+        run: |
+          curl -sSL https://github.com/CE-Programming/toolchain/releases/latest/download/CEdev-Linux.tar.gz | tar -xz -C "$HOME"
+          echo "$HOME/CEdev/bin" >> "$GITHUB_PATH"
+      - name: Build
+        run: make -C calc
+      - uses: actions/upload-artifact@v4
+        with:
+          name: REMOTE
+          path: calc/bin/REMOTE.8xp
+          if-no-files-found: error
+
+  host:
+    name: Host tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: |
+          sudo apt-get update && sudo apt-get install -y xvfb
+          pip install -r host/requirements.txt pytest
+      - name: Test
+        run: xvfb-run -a -s "-screen 0 1280x720x24" python -m pytest -q host/tests
