@@ -45,6 +45,7 @@ class Viewport:
         self.scales = [fit] + [s for s in ZOOM_SCALES if s < fit * 0.8]
         self.level = 0
         self._origin = [0.0, 0.0]
+        self.x_step = 1  # calculator pixels per framebuffer byte (8, 2 or 1)
 
     @property
     def scale(self):
@@ -75,7 +76,13 @@ class Viewport:
             origin = max(origin, pos + margin - reg)  # pointer near right/bottom edge
             self._origin[axis] = max(0.0, min(float(full - reg), origin))
 
-        return (int(self._origin[0]), int(self._origin[1]), reg_w, reg_h), (out_w, out_h)
+        # Pan in whole calculator pixels, so a panned picture is the old one
+        # shifted exactly and can be moved on the calculator instead of resent.
+        # Sideways, that also has to be whole framebuffer bytes (x_step pixels).
+        step = scale if float(scale).is_integer() else 1
+        x = int(self._origin[0] // (step * self.x_step) * (step * self.x_step))
+        y = int(self._origin[1] // step * step)
+        return (x, y, reg_w, reg_h), (out_w, out_h)
 
 
 class Renderer:
@@ -86,6 +93,7 @@ class Renderer:
         self.viewport = viewport
         self.resample = RESAMPLE[resample]
         self._mapping = None
+        self.mapping = None  # (x, y, scale_x, scale_y, left, out_w, out_h) of the last render
         try:
             self._font = ImageFont.load_default(size=9)
         except TypeError:  # Pillow < 10.1
@@ -106,6 +114,7 @@ class Renderer:
         left = (LCD_W - out_w) // 2
         canvas.paste(shot, (left, 0))
         self._mapping = (x, y, w / out_w, h / out_h, left, out_w, out_h)
+        self.mapping = self._mapping
 
         if status:
             text = "%s  zoom:%s" % (status, self.viewport.label())

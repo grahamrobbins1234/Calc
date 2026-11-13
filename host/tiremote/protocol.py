@@ -1,6 +1,6 @@
 """Wire protocol constants. Mirrors calc/src/proto.h."""
 
-PROTO_VERSION = 2
+PROTO_VERSION = 3
 
 # Calculator -> host
 MSG_HELLO = 0xA1  # + 1 byte version
@@ -22,7 +22,7 @@ OP_SKIP = 0x00
 OP_RUN = 0x40
 OP_LIT = 0x80
 OP_END = 0xC0
-OP_MOVE = 0xC1  # + u16 xb + u8 y + u16 wb + u8 h + s8 dy
+OP_MOVE = 0xC1  # + u16 xb + u8 y + u16 wb + u8 h + s8 dx + s8 dy
 
 PKT_LZ4 = 0x8000
 PKT_MAX = 8192

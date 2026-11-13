@@ -145,8 +145,9 @@ To change any of this, edit the two dictionaries at the top of
   startup order, replugging and corrupted data.
 - **Frames:** 320x240 at 8, 4 or 1 bits per pixel. Each frame is a list of
   `skip` / `fill` / `copy` operations against the previous frame, plus
-  `move` operations that shift a block of rows when the host detects
-  scrolling, so a scrolled page only costs the newly exposed strip.
+  `move` operations that shift a block of the picture up, down or sideways.
+  The host uses them when something scrolls and when a zoomed view pans to
+  follow the pointer, so only the newly exposed strip is sent.
 - **Compression:** host data travels in packets of up to 8 KB, each
   LZ4-compressed when that makes it smaller. The packet buffers live in the
   unused half of the calculator's video memory.
@@ -196,5 +197,9 @@ with sanitizers on, and check it against the Python side.
   that is the cause; please report it.
 - The calculator program and the host must be the same protocol version; the
   host says so if they are not.
+- If the calculator ever rejects what the host sent, it briefly shows its
+  waiting screen with a "Last link error code". That number says what was
+  wrong (the list is in `calc/src/decode.h`) and is worth including in a bug
+  report.
 - The calculator has no Wi-Fi or Bluetooth of its own; going wireless needs
   the ESP32 bridge in [`bridge/`](bridge/README.md).

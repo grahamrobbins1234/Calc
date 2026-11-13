@@ -87,7 +87,7 @@ class FakeCalc:
             if header == OP_END:
                 return
             if header == OP_MOVE:
-                apply_move(self.fb.reshape(LCD_H, stride), *struct.unpack("<HBHBb", self._get(7)))
+                apply_move(self.fb.reshape(LCD_H, stride), *struct.unpack("<HBHBbb", self._get(8)))
                 self.moves += 1
                 continue
             op, count = header & 0xC0, header & 0x3F

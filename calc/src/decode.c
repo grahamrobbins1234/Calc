@@ -31,24 +31,42 @@ bool rd_read(rd_stream_t *s, uint8_t *dst, unsigned int len) {
         (var) = *s->p++;                                 \
     } while (0)
 
-/* Scroll a block of rows. All fields are validated against the framebuffer. */
-static bool move_rows(uint8_t *fb, unsigned int fb_size, unsigned int stride, const uint8_t *arg) {
+uint8_t rd_error;
+
+#define FAIL(code)           \
+    do {                     \
+        rd_error = (code);   \
+        return false;        \
+    } while (0)
+
+/*
+ * Shift a block of the picture. All fields are validated against the
+ * framebuffer. The two distances arrive as signed bytes but are handled as
+ * a direction and an unsigned size, so nothing here depends on signed maths.
+ */
+static bool move_block(uint8_t *fb, unsigned int fb_size, unsigned int stride,
+                       const uint8_t *arg) {
     unsigned int xb = arg[0] | ((unsigned int)arg[1] << 8);
     unsigned int y = arg[2];
     unsigned int wb = arg[3] | ((unsigned int)arg[4] << 8);
     unsigned int h = arg[5];
-    int dy = (int8_t)arg[6];
+    bool left = (arg[6] & 0x80) != 0;
+    bool up = (arg[7] & 0x80) != 0;
+    unsigned int mx = left ? 0x100u - arg[6] : arg[6];
+    unsigned int my = up ? 0x100u - arg[7] : arg[7];
     unsigned int rows = fb_size / stride;
     unsigned int i;
 
-    if (!wb || !h || !dy || xb + wb > stride || y + h > rows) return false;
-    if (dy < 0 ? (unsigned int)-dy > y : y + h + (unsigned int)dy > rows) return false;
+    if (!wb || !h || (!mx && !my) || xb + wb > stride || y + h > rows) return false;
+    if (left ? mx > xb : xb + wb + mx > stride) return false;
+    if (up ? my > y : y + h + my > rows) return false;
 
-    /* Copy in the order that never overwrites a row before it has been read. */
+    /* Go through the rows in the order that never overwrites one before it is read. */
     for (i = 0; i < h; i++) {
-        unsigned int row = dy < 0 ? y + i : y + h - 1 - i;
-        uint8_t *src = fb + row * stride + xb;
-        memcpy(src + dy * (int)stride, src, wb);
+        unsigned int row = up ? y + i : y + h - 1 - i;
+        unsigned int to_row = up ? row - my : row + my;
+        unsigned int to_xb = left ? xb - mx : xb + mx;
+        memmove(fb + to_row * stride + to_xb, fb + row * stride + xb, wb);
     }
     return true;
 }
@@ -65,18 +83,18 @@ bool rd_decode_frame(rd_stream_t *s, uint8_t *fb, unsigned int fb_size, unsigned
         NEXT_BYTE(header);
         if (header == OP_END) return true;
         if (header == OP_MOVE) {
-            uint8_t arg[7];
+            uint8_t arg[8];
             if (!rd_read(s, arg, sizeof arg)) return false;
             if (touch) {
                 touch();
                 touch = NULL;
             }
-            if (!move_rows(fb, fb_size, stride, arg)) return false;
+            if (!move_block(fb, fb_size, stride, arg)) FAIL(RD_ERR_MOVE);
             continue;
         }
 
         op = header & 0xC0;
-        if (op == 0xC0) return false; /* unknown extended op */
+        if (op == 0xC0) FAIL(RD_ERR_OP);
         count = header & 0x3F;
         if (!count) {
             uint8_t lo, hi;
@@ -84,7 +102,7 @@ bool rd_decode_frame(rd_stream_t *s, uint8_t *fb, unsigned int fb_size, unsigned
             NEXT_BYTE(hi);
             count = lo | ((unsigned int)hi << 8);
         }
-        if (count > left) return false; /* corrupt stream */
+        if (count > left) FAIL(RD_ERR_OVERRUN);
         left -= count;
 
         if (op == OP_SKIP) {
@@ -178,11 +196,11 @@ static bool pk_more(rd_stream_t *s) {
         n &= ~(unsigned int)PKT_LZ4;
         if (!pk_read(head, 2)) return false;
         plain_len = head[0] | ((unsigned int)head[1] << 8);
-        if (!n || n > PKT_MAX || !plain_len || plain_len > PKT_MAX) return false;
+        if (!n || n > PKT_MAX || !plain_len || plain_len > PKT_MAX) FAIL(RD_ERR_PACKET);
         if (!pk_read(pk_wire, n)) return false;
-        if (!lz4_decode(pk_wire, n, pk_plain, plain_len)) return false;
+        if (!lz4_decode(pk_wire, n, pk_plain, plain_len)) FAIL(RD_ERR_LZ4);
     } else {
-        if (!n || n > PKT_MAX) return false;
+        if (!n || n > PKT_MAX) FAIL(RD_ERR_PACKET);
         if (!pk_read(pk_plain, n)) return false;
         plain_len = n;
     }

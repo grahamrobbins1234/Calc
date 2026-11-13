@@ -16,7 +16,7 @@
 #ifndef PROTO_H
 #define PROTO_H
 
-#define PROTO_VERSION 2
+#define PROTO_VERSION 3
 
 /* Calculator -> host */
 #define MSG_HELLO 0xA1 /* + 1 byte version. "Start over: send mode, palette and a full frame." */
@@ -45,9 +45,10 @@
 #define OP_LIT  0x80 /* + `count` bytes: copy verbatim */
 #define OP_END  0xC0 /* end of frame */
 /*
- * OP_MOVE: + u16 xb + u8 y + u16 wb + u8 h + s8 dy.
- * Moves the block of rows [y, y+h) x byte columns [xb, xb+wb) down by dy
- * rows (up if negative), like scrolling. Does not advance the position.
+ * OP_MOVE: + u16 xb + u8 y + u16 wb + u8 h + s8 dx + s8 dy.
+ * Copies the block of rows [y, y+h) x byte columns [xb, xb+wb) to a place
+ * dx bytes to the right and dy rows down (negative: left / up), like
+ * scrolling or panning. Does not advance the position.
  */
 #define OP_MOVE 0xC1
 

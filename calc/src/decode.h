@@ -8,6 +8,20 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+/*
+ * Why the last decoding call failed, for the status screen. Zero means the
+ * data simply stopped arriving (timeout, unplugged, or quitting).
+ */
+extern uint8_t rd_error;
+#define RD_ERR_NONE    0
+#define RD_ERR_OP      2 /* unknown frame op */
+#define RD_ERR_OVERRUN 3 /* frame runs past the end of the screen */
+#define RD_ERR_MOVE    4 /* move op outside the screen */
+#define RD_ERR_PACKET  5 /* bad packet length */
+#define RD_ERR_LZ4     6 /* corrupt compressed packet */
+#define RD_ERR_MESSAGE 7 /* unknown message type */
+#define RD_ERR_MODE    8 /* unsupported screen mode */
+
 /* A pull-based byte stream. `more` must refill [p, end) or return false. */
 typedef struct rd_stream {
     const uint8_t *p;

@@ -14,11 +14,11 @@ import time
 import numpy as np
 import serial
 
-from .encoder import apply_move, encode_frame, move_op, packetize
+from .encoder import apply_move, encode_frame, move_is_valid, move_op, packetize
 from .palette import MODE_ORDER, MODES
 from .protocol import (CURSOR_HIDDEN, FRAME_WINDOW, KEY_GROUPS, MSG_ACK, MSG_BYE, MSG_CURSOR,
                        MSG_HELLO, MSG_KEYS, MSG_MODE, PROTO_VERSION)
-from .scroll import find_scroll
+from .scroll import find_scroll, pan_move
 
 KEEPALIVE = 0.5  # send something at least this often so the calculator knows we are here
 TICK = 1 / 60
@@ -40,6 +40,7 @@ class Session:
         self.log = log
         self.mode = MODES[colors]
         self.shown = None  # the calculator's framebuffer as we believe it to be
+        self._shown_mapping = None  # which part of the desktop that picture shows
         self.frames = 0
         self.bytes_sent = 0
         self._wanted_mode = self.mode
@@ -135,24 +136,40 @@ class Session:
             self._cursor_sent = spot
 
     def _render(self):
+        self.renderer.viewport.x_step = max(1, 8 // self.mode.bpp)
         status = "%s  %sc" % (self.mapper.status(), self.mode.name)
         rgb = self.renderer.render(self._pointer(), status)
         return self.mode.pack(rgb, self.dither)
 
-    def _encode(self, frame):
+    def _pan(self, mapping):
+        """If the view slid since the last frame sent, the move that follows it."""
+        old = self._shown_mapping
+        if old is None or mapping is None or old[2:] != mapping[2:]:
+            return None
+        shift_x = (old[0] - mapping[0]) / mapping[2]
+        shift_y = (old[1] - mapping[1]) / mapping[3]
+        if not (shift_x.is_integer() and shift_y.is_integer()):
+            return None
+        return pan_move(int(shift_x), int(shift_y), mapping[4], mapping[5], mapping[6],
+                        self.mode.bpp)
+
+    def _encode(self, frame, mapping=None):
         """Frame message taking the calculator from self.shown to `frame`."""
         if self.shown is None:
             return encode_frame(frame)
-        plain = encode_frame(frame, self.shown)
+        best = encode_frame(frame, self.shown)
         stride = self.mode.stride
-        move = find_scroll(frame.reshape(-1, stride), self.shown.reshape(-1, stride))
-        if move:
-            moved = self.shown.copy()
-            apply_move(moved.reshape(-1, stride), *move)
-            scrolled = encode_frame(frame, moved, move_op(*move))
-            if len(scrolled) < len(plain):
-                return scrolled
-        return plain
+        new2d, old2d = frame.reshape(-1, stride), self.shown.reshape(-1, stride)
+        # Try shifting what is already on the calculator: the whole picture if
+        # the view panned, or a block of rows if something scrolled.
+        for move in (self._pan(mapping), find_scroll(new2d, old2d)):
+            if move and move_is_valid(old2d.shape[0], stride, *move):
+                moved = self.shown.copy()
+                apply_move(moved.reshape(-1, stride), *move)
+                candidate = encode_frame(frame, moved, move_op(*move))
+                if len(candidate) < len(best):
+                    best = candidate
+        return best
 
     def run(self):
         """Serve until the calculator disconnects or stop() is called."""
@@ -196,6 +213,7 @@ class Session:
                     self.shown = None
 
                 frame = self._render()
+                mapping = self.renderer.mapping
                 fresh = self.shown is None
                 if (not fresh and np.array_equal(frame, self.shown)
                         and time.monotonic() - last_sent < KEEPALIVE):
@@ -204,7 +222,7 @@ class Session:
                 out = b""
                 if fresh:
                     out = bytes([MSG_MODE, self.mode.bpp]) + self.mode.palette_message()
-                out += self._encode(frame)
+                out += self._encode(frame, mapping)
                 try:
                     with self._write_lock:
                         self._write(out)
@@ -214,6 +232,7 @@ class Session:
                     self._streaming = False
                     continue
                 self.shown = frame
+                self._shown_mapping = mapping
                 credits -= 1
                 last_sent = time.monotonic()
                 self.frames += 1

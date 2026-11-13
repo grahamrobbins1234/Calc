@@ -4,7 +4,8 @@
  *
  * stdout: bpp, cursor x (2 bytes), cursor y, then the framebuffer with the
  * pointer lifted, then the framebuffer with the pointer drawn.
- * Exit status 0 on clean end of input, 4 if the stream was rejected.
+ * Exit status 0 on clean end of input, 4 if the stream was rejected
+ * (the reason, rd_error, goes to stderr).
  */
 #include <stdio.h>
 #include <string.h>
@@ -79,7 +80,10 @@ int main(void) {
 
     memset(fb, 0xA5, sizeof fb); /* video memory starts with leftovers */
     pk_init(&s, read_exact, wire, plain);
-    if (!serve(&s)) return 4;
+    if (!serve(&s)) {
+        fprintf(stderr, "%d", rd_error);
+        return 4;
+    }
 
     size = SCREEN_W * SCREEN_H * bpp / 8;
     head[0] = bpp;

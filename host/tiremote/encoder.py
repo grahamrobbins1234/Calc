@@ -23,14 +23,23 @@ def _run_starts(boundary):
     return np.concatenate([[0], np.flatnonzero(boundary) + 1])
 
 
-def move_op(xb, y, wb, h, dy):
-    """Frame op: move rows [y, y+h) x byte columns [xb, xb+wb) down by dy rows."""
-    return struct.pack("<BHBHBb", OP_MOVE, xb, y, wb, h, dy)
+def move_op(xb, y, wb, h, dx, dy):
+    """Frame op: copy rows [y, y+h) x byte columns [xb, xb+wb) to a place
+    dx bytes right and dy rows down."""
+    return struct.pack("<BHBHBbb", OP_MOVE, xb, y, wb, h, dx, dy)
 
 
-def apply_move(fb2d, xb, y, wb, h, dy):
+def move_is_valid(rows, stride, xb, y, wb, h, dx, dy):
+    return bool(wb > 0 and h > 0 and (dx or dy)
+                and -128 <= dx <= 127 and -128 <= dy <= 127
+                and xb >= 0 and y >= 0 and xb + wb <= stride and y + h <= rows
+                and 0 <= xb + dx and xb + wb + dx <= stride
+                and 0 <= y + dy and y + h + dy <= rows)
+
+
+def apply_move(fb2d, xb, y, wb, h, dx, dy):
     """What move_op does, applied to a (rows, stride) array in place."""
-    fb2d[y + dy:y + dy + h, xb:xb + wb] = fb2d[y:y + h, xb:xb + wb].copy()
+    fb2d[y + dy:y + dy + h, xb + dx:xb + dx + wb] = fb2d[y:y + h, xb:xb + wb].copy()
 
 
 def encode_frame(new, old=None, prefix=b""):
@@ -142,13 +151,12 @@ def decode_frame(data, fb, stride=320):
         header = data[i]
         i += 1
         if header == OP_MOVE:
-            xb, y, wb, h, dy = struct.unpack_from("<HBHBb", data, i)
-            i += 7
+            move = struct.unpack_from("<HBHBbb", data, i)
+            i += 8
             rows = fb.size // stride
-            if not (wb and h and dy and xb + wb <= stride and y + h <= rows
-                    and 0 <= y + dy and y + h + dy <= rows):
+            if not move_is_valid(rows, stride, *move):
                 raise ValueError("bad move")
-            apply_move(fb.reshape(rows, stride), xb, y, wb, h, dy)
+            apply_move(fb.reshape(rows, stride), *move)
             continue
         op = header & 0xC0
         if op == OP_END:

@@ -106,8 +106,8 @@ def test_scroll_is_found_and_cheap(dy):
 
     move = find_scroll(new, old)
     assert move is not None
-    xb, y, wb, h, found_dy = move
-    assert found_dy == dy and xb == 24 and wb == 296
+    xb, y, wb, h, found_dx, found_dy = move
+    assert found_dy == dy and found_dx == 0 and xb == 24 and wb == 296
     assert h == 220 - abs(dy)
 
     moved = old.copy()
@@ -134,6 +134,88 @@ def test_no_scroll_in_unrelated_or_static_frames():
     blank_new = blank_old.copy()
     blank_new[50:200] = 0  # big change, but nothing recognisable moved
     assert find_scroll(blank_new, blank_old) is None
+
+
+def test_moves_in_every_direction(harness):
+    """Every shift direction, including overlapping ones, on the calculator's C code."""
+    rng = np.random.default_rng(8)
+    start = rng.integers(0, 256, (240, 320), dtype=np.uint8)
+    setup = bytes([MSG_MODE, 8]) + encode_frame(start.ravel())
+    for dx, dy in [(0, -1), (0, 1), (-1, 0), (1, 0), (-7, -3), (9, -2), (-5, 4), (6, 6),
+                   (0, -127), (0, 127), (-127, 0), (127, 0), (-100, 100)]:
+        xb, y = max(0, -dx), max(0, -dy)
+        move = (xb, y, 320 - abs(dx), 240 - abs(dy), dx, dy)
+        expected = start.copy()
+        apply_move(expected, *move)
+        message = b"F" + move_op(*move) + bytes([OP_END])
+        fb = start.ravel().copy()
+        decode_frame(message, fb)
+        assert (fb == expected.ravel()).all()
+        status, _, lifted, _ = run_calc(harness, packetize(setup + message))
+        assert status == 0, (dx, dy)
+        assert (lifted == expected.ravel()).all(), (dx, dy)
+
+
+class _Desktop:
+    """A fake 1600x1200 desktop of distinct blocks, to pan around on."""
+
+    left = top = 0
+    width, height = 1600, 1200
+
+    def __init__(self):
+        from PIL import Image
+
+        rng = np.random.default_rng(9)
+        blocks = rng.integers(0, 256, (150, 200, 3), dtype=np.uint8)
+        self.image = Image.fromarray(np.kron(blocks, np.ones((8, 8, 1), dtype=np.uint8)))
+
+    def grab(self, x, y, w, h):
+        return self.image.crop((x, y, x + w, y + h))
+
+
+@pytest.mark.parametrize("name,scale", [("256", 1), ("256", 2), ("16", 1), ("16", 2), ("2", 1)])
+def test_panning_the_view_shifts_instead_of_resending(harness, name, scale):
+    """Moving the pointer around a zoomed view: the session's own encoder,
+    checked on the calculator's C code."""
+    from tiremote.inject import NullInjector
+    from tiremote.keymap import KeyMapper
+    from tiremote.session import Session
+    from tiremote.view import Renderer, Viewport
+
+    grabber = _Desktop()
+    viewport = Viewport(grabber.width, grabber.height)
+    viewport.level = viewport.scales.index(scale)  # screen pixels per calculator pixel
+    injector = NullInjector((800, 600))
+    session = Session(None, Renderer(grabber, viewport, "nearest"), injector,
+                      KeyMapper(injector), colors=name, log=lambda *_: None)
+    mode = session.mode
+
+    wire = b""
+    sizes = {}
+    walk = [(0, 0)] + [(dx, dy) for dx, dy in
+                       [(0, 60), (0, 60), (0, -90), (70, 0), (70, 0), (-120, 0), (48, 48),
+                        (-64, 32), (0, 200), (0, -400), (300, 0), (-600, 0), (16, -16)]
+                       for _ in range(3)]
+    for step, (dx, dy) in enumerate(walk):
+        injector.move(dx, dy)
+        frame = session._render()
+        mapping = session.renderer.mapping
+        messages = b""
+        if session.shown is None:
+            messages = bytes([MSG_MODE, mode.bpp]) + mode.palette_message()
+        body = session._encode(frame, mapping)
+        if session.shown is not None and not np.array_equal(frame, session.shown):
+            sizes[step] = (len(body), len(encode_frame(frame, session.shown)), b"\xc1" in body[:2])
+        wire += packetize(messages + body)
+        session.shown, session._shown_mapping = frame, mapping
+
+    status, _, lifted, _ = run_calc(harness, wire)
+    assert status == 0
+    assert (lifted == session.shown).all()
+
+    panned = [v for v in sizes.values() if v[2]]
+    assert len(panned) >= len(sizes) * 0.6, "most pans should be sent as shifts"
+    assert sum(v[0] for v in panned) < sum(v[1] for v in panned) / 3
 
 
 # -- packets ------------------------------------------------------------------
@@ -268,10 +350,12 @@ def test_c_decoder_rejects_bad_input(harness):
         "unknown message": b"Z",
         "unknown op": b"F" + bytes([0xC7]),
         "bad mode": bytes([MSG_MODE, 3]),
-        "move out of range": b"F" + move_op(0, 200, 320, 40, 1) + bytes([OP_END]),
-        "move too wide": b"F" + move_op(300, 0, 21, 10, 5) + bytes([OP_END]),
-        "move up off the top": b"F" + move_op(0, 3, 320, 10, -4) + bytes([OP_END]),
-        "move by nothing": b"F" + move_op(0, 3, 320, 10, 0) + bytes([OP_END]),
+        "move off the bottom": b"F" + move_op(0, 200, 320, 40, 0, 1) + bytes([OP_END]),
+        "move too wide": b"F" + move_op(300, 0, 21, 10, 0, 5) + bytes([OP_END]),
+        "move up off the top": b"F" + move_op(0, 3, 320, 10, 0, -4) + bytes([OP_END]),
+        "move off the left": b"F" + move_op(3, 0, 100, 10, -4, 0) + bytes([OP_END]),
+        "move off the right": b"F" + move_op(200, 0, 100, 10, 21, 0) + bytes([OP_END]),
+        "move by nothing": b"F" + move_op(0, 3, 320, 10, 0, 0) + bytes([OP_END]),
     }
     assert run_calc(harness, packetize(good))[0] == 0
     for name, messages in bad_streams.items():

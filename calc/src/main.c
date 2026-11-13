@@ -195,6 +195,9 @@ static bool set_mode(uint8_t new_bpp) {
     return true;
 }
 
+/* Shown on the waiting screen so a rejected frame can be reported. */
+static uint8_t last_error;
+
 static void status(const char *line1, const char *line2) {
     set_mode(8); /* graphx draws 8 bits per pixel */
     gfx_palette[COLOR_BLACK] = gfx_RGBTo1555(0, 0, 0);
@@ -206,6 +209,11 @@ static void status(const char *line1, const char *line2) {
     gfx_PrintStringXY("TI-84 Plus CE Remote Desktop", 8, 8);
     gfx_PrintStringXY(line1, 8, 40);
     gfx_PrintStringXY(line2, 8, 56);
+    if (last_error) {
+        gfx_PrintStringXY("Last link error code:", 8, 88);
+        gfx_SetTextXY(160, 88);
+        gfx_PrintUInt(last_error, 1);
+    }
     gfx_PrintStringXY("[2nd] + [mode] to quit", 8, 224);
 }
 
@@ -234,7 +242,11 @@ static void serve(void) {
 
         switch (type) {
         case MSG_MODE:
-            if (!rd_read(&s, arg, 1) || !set_mode(arg[0])) return;
+            if (!rd_read(&s, arg, 1)) return;
+            if (!set_mode(arg[0])) {
+                rd_error = RD_ERR_MODE;
+                return;
+            }
             picture = true;
             break;
 
@@ -263,7 +275,8 @@ static void serve(void) {
             break;
 
         default:
-            return; /* out of sync */
+            rd_error = RD_ERR_MESSAGE; /* out of sync */
+            return;
         }
     }
 }
@@ -300,8 +313,10 @@ int main(void) {
         if (quit) break;
 
         /* Runs for as long as the host keeps talking; shows the desktop. */
+        rd_error = RD_ERR_NONE;
         serve();
         if (quit) break;
+        if (rd_error) last_error = rd_error;
 
         /* Host missing, stalled, or out of sync: resynchronise from scratch. */
         if (picture) {
