@@ -5,6 +5,22 @@ install it, and what to try. Everything here passes the automated tests but
 has **not** been run on a real calculator yet, so each item says what
 "working" looks like and what to send back if it isn't.
 
+## Current status: the newest calculator program crashes
+
+The newest `REMOTE.8xp` crashes the calculator as soon as the first picture
+arrives (the calculator resets and shows "Validating OS" on restart). The
+cause is not known yet. Until it is fixed:
+
+- **To keep using it:** install the last known-good calculator program from
+  [this build](https://github.com/grahamrobbins1234/Calc/actions/runs/43513640694).
+  The current host works with it.
+- **To help find the cause:** try the calculator program from
+  [this in-between build](https://github.com/grahamrobbins1234/Calc/actions/runs/43612285125)
+  once, with the current host, and report whether it crashes. That single
+  answer says which half of the recent changes is at fault.
+
+The checklist below applies once a fixed build is out.
+
 ## 1. Update both sides
 
 **Calculator**
@@ -22,7 +38,7 @@ cd ~/Calc && git pull
 source ~/calcenv/bin/activate
 pip install -r host/requirements.txt
 cd host
-python -m tiremote --rotate 90 --screen-size 956x1470 --stats
+python -m tiremote --stats
 ```
 
 Then start `REMOTE` on the calculator (`[apps]` → Cabri Jr → Open → ARTIFICE).
@@ -47,14 +63,7 @@ shows.
 
 Work through these in order; each is independent.
 
-### A. Pointer turned to match the rotated picture
-
-With `--rotate 90`, the arrow pointer should now point the right way up as
-you hold the calculator, not lie on its side.
-
-- **Report:** whether it looks right, and whether the tip is where clicks land.
-
-### B. Command key on the Mac
+### A. Command key on the Mac
 
 `[vars]` is now Command and `[math]` is Control.
 
@@ -62,20 +71,7 @@ you hold the calculator, not lie on its side.
   (the letter C). That should copy; hold `[vars]` and tap `[6]` (V) to paste.
 - **Report:** whether shortcuts work while letters are on.
 
-### C. Automatic screen-size detection
-
-Stop the host and run it once **without** `--screen-size`:
-
-```sh
-python -m tiremote --rotate 90 --stats
-```
-
-- **Working:** the first line says `Sharing monitor 1 (956x1470, rotated display detected)`.
-- **Not working:** it says `1470x956` and the picture is cut off. Go back to
-  using `--screen-size 956x1470`, and send the output of
-  `python -m tiremote --displays`.
-
-### D. Big scene changes
+### B. Big scene changes
 
 Switch between two very different windows, or open a full-screen picture.
 
@@ -84,7 +80,7 @@ Switch between two very different windows, or open a full-screen picture.
 - **Report:** whether that feels faster than before, and whether the
   sharpening step leaves any wrong-looking patches.
 
-### E. 3D game or video
+### C. 3D game or video
 
 Run something where the whole picture keeps changing, for 20 seconds or more.
 
@@ -99,14 +95,14 @@ Run something where the whole picture keeps changing, for 20 seconds or more.
   - starting with `--video-fps 12` (steps down to quarter size sooner) or
     `--video-fps 4` (stays at half size longer)
 
-### F. Link speed: new compression
+### D. Link speed: new compression
 
 This only shows up in the numbers. Do the same activity twice, for
 example scrolling a web page up and down for 20 seconds while zoomed in:
 
 ```sh
-python -m tiremote --rotate 90 --screen-size 956x1470 --stats
-python -m tiremote --rotate 90 --screen-size 956x1470 --stats --no-history
+python -m tiremote --stats
+python -m tiremote --stats --no-history
 ```
 
 - **Expect:** the first run shows a higher frame rate, or the same frame
@@ -121,7 +117,6 @@ python -m tiremote --rotate 90 --screen-size 956x1470 --stats --no-history
 | Stuck on "Waiting for host" | Check the host says "Connected"; unplug and replug | What the host printed |
 | Host says the calculator's version is too old | Re-send `REMOTE.8xp` from the newest build | — |
 | Blocky picture never sharpens | `[2nd]`+`[del]` until the status line says `video:off` | What was on screen at the time |
-| Picture cut off or the wrong shape | Add `--screen-size 956x1470` | Output of `python -m tiremote --displays` |
 | Colours wrong in 16-colour, 16-grey or black-and-white mode | `[2nd]`+`[clear]` back to 256 colours | Which mode, and a photo |
 
 ## 5. Results to send back
@@ -131,4 +126,4 @@ The short version, if you only have a minute:
 1. Stats lines from normal desktop use.
 2. Stats lines from a game, saying whether it was half or quarter size.
 3. Stats lines with and without `--no-history`.
-4. Anything from sections A–E that didn't behave as described.
+4. Anything from sections A–C that didn't behave as described.
