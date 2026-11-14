@@ -49,6 +49,11 @@ def parse_args(argv=None):
                         help="with --listen: do not compress the stream to the bridge")
     parser.add_argument("--monitor", type=int, default=1,
                         help="monitor to share: 1 = primary, 2.. = others, 0 = all (default: 1)")
+    parser.add_argument("--screen-size", metavar="WxH",
+                        help="override the detected size of the monitor, e.g. 956x1470, if a "
+                             "rotated display is shown cut off")
+    parser.add_argument("--displays", action="store_true",
+                        help="print what the system reports about the displays and exit")
     parser.add_argument("--rotate", type=int, choices=[0, 90, 180, 270], default=0,
                         help="turn the picture clockwise by this many degrees, for holding "
                              "the calculator sideways; the arrow keys turn with it")
@@ -98,7 +103,17 @@ def main(argv=None):
     from .palette import MODES
     from .session import Session
 
-    grabber = MssGrabber(args.monitor)
+    size = None
+    if args.screen_size:
+        try:
+            size = tuple(int(part) for part in args.screen_size.lower().split("x"))
+            assert len(size) == 2 and min(size) > 0
+        except (ValueError, AssertionError):
+            sys.exit("--screen-size must look like 956x1470")
+    grabber = MssGrabber(args.monitor, size)
+    if args.displays:
+        print("\n".join(grabber.report()))
+        return 0
     viewport = Viewport(grabber.width, grabber.height, args.rotate)
     renderer = Renderer(grabber, viewport, args.filter)
     injector = make_injector(args, grabber)
@@ -128,8 +143,9 @@ def main(argv=None):
         address, tcp_port = parse_listen(args.listen)
         listener = Listener(address, tcp_port, key, compress=not args.no_compress)
 
-    print("Sharing monitor %d (%dx%d). Press Ctrl+C to stop."
-          % (args.monitor, grabber.width, grabber.height))
+    print("Sharing monitor %d (%dx%d%s). Press Ctrl+C to stop."
+          % (args.monitor, grabber.width, grabber.height,
+             ", " + grabber.note if grabber.note else ""))
     if listener:
         print("Waiting for the Wi-Fi bridge on port %d. The stream is not encrypted: "
               "use it on a network you trust." % listener.port)
