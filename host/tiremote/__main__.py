@@ -74,6 +74,9 @@ def parse_args(argv=None):
                         help="print frame rate and data rate every few seconds (default 5)")
     parser.add_argument("--no-lz4", action="store_true",
                         help="do not LZ4-compress data for the calculator")
+    parser.add_argument("--no-history", action="store_true",
+                        help="compress each packet on its own instead of letting it refer "
+                             "back to earlier ones (for comparing speeds)")
     parser.add_argument("--dither", action="store_true",
                         help="dither colours (smoother gradients, slower updates)")
     parser.add_argument("--filter", choices=sorted(RESAMPLE), default="lanczos",
@@ -195,7 +198,7 @@ def main(argv=None):
             session = Session(port, renderer, injector, mapper, origin,
                               fps=args.fps, dither=args.dither, colors=args.colors,
                               lz4=not args.no_lz4, video=args.video, stats=args.stats,
-                              video_fps=args.video_fps)
+                              video_fps=args.video_fps, history=not args.no_history)
             started = time.monotonic()
             try:
                 error = session.run()

@@ -20,7 +20,7 @@
 #ifndef PROTO_H
 #define PROTO_H
 
-#define PROTO_VERSION 6
+#define PROTO_VERSION 7
 
 /* Calculator -> host */
 #define MSG_HELLO 0xA1 /* + 1 byte version. "Start over: send mode, palette and a full frame." */
@@ -76,6 +76,13 @@
 #define PKT_OOB 0x4000
 #define PKT_OOB_LEN 3
 #define PKT_MAX 8192 /* largest payload, on the wire or decompressed */
+/*
+ * An LZ4 packet may copy from the payloads sent before it (since the last
+ * HELLO), up to PK_HISTORY bytes back. The calculator keeps them in a
+ * window of PK_WINDOW bytes.
+ */
+#define PK_HISTORY 24576
+#define PK_WINDOW (PK_HISTORY + 2 * PKT_MAX)
 
 #define KEY_GROUPS 7
 

@@ -1,7 +1,7 @@
 """Wire protocol constants. Mirrors calc/src/proto.h."""
 
-PROTO_VERSION = 6
-COMPATIBLE_VERSIONS = (4, 5, 6)  # calculator programs this host can talk to
+PROTO_VERSION = 7
+COMPATIBLE_VERSIONS = (4, 5, 6, 7)  # calculator programs this host can talk to
 
 # Calculator -> host
 MSG_HELLO = 0xA1  # + 1 byte version
@@ -31,6 +31,7 @@ OP_MOVE = 0xC1  # + u16 xb + u8 y + u16 wb + u8 h + s8 dx + s8 dy
 PKT_LZ4 = 0x8000
 PKT_OOB = 0x4000  # out-of-band pointer position: u16 x + u8 y
 PKT_MAX = 8192
+PK_HISTORY = 24576  # how far back an LZ4 packet may copy from earlier payloads (v7+)
 
 KEY_GROUPS = 7
 

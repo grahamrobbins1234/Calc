@@ -146,8 +146,9 @@ def test_frame_window_and_version_check(stack):
     logged = []
     session.log = logged.append
 
-    calc.hello(version=4)  # the previous calculator program still works
+    calc.hello(version=4)  # an earlier calculator program still works
     assert wait_for(lambda: calc.frames >= 1 and session.calc_version == 4)
+    assert not session._packer.history, "older programs get packets that stand alone"
     frames = calc.frames
 
     calc.hello(version=1)  # a really old one does not

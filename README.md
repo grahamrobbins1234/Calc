@@ -79,6 +79,7 @@ a different order, or unplug and replug, both sides reconnect on their own.
 | `--video-fps N` | in automatic video mode, step down to quarter size below this frame rate (default 8) |
 | `--dither` | dithered colours: smoother gradients, more data per frame |
 | `--stats [SECONDS]` | print frame rate and data rate every few seconds while running |
+| `--no-history` | compress each packet on its own, for comparing speeds |
 | `--no-lz4` | do not LZ4-compress the stream (if the calculator turns out faster without) |
 | `--filter NAME` | downscaling filter: `lanczos` (default), `bilinear`, `box`, `nearest` |
 | `--listen [PORT]` | network mode: wait for the [Wi-Fi bridge](bridge/README.md) instead of a cable (needs `--key` or `TIREMOTE_KEY`) |
@@ -180,8 +181,12 @@ To change any of this, edit the two dictionaries at the top of
   returns to full size it sends the sharp picture as changes to the enlarged
   one already on screen, so flat areas are not sent again.
 - **Compression:** host data travels in packets of up to 8 KB, each
-  LZ4-compressed when that makes it smaller. The packet buffers live in the
-  unused half of the calculator's video memory.
+  LZ4-compressed when that makes it smaller. A packet may copy from the
+  24 KB of data sent before it, which the calculator keeps in a sliding
+  window, so content that was on screen a moment ago costs little to show
+  again. On a recorded scroll-and-page-switch session this cut the data by
+  about a third in the colour modes. The buffers live in the unused half of
+  the calculator's video memory.
 - **Pointer:** the calculator draws the mouse pointer itself. The host sends
   its position as a tiny out-of-band packet whenever it moves. These may
   arrive between the chunks of a large frame and are acted on at once, so
@@ -228,9 +233,10 @@ with sanitizers on, and check it against the Python side.
   byte is taken from the LCD controller's documentation and has not been
   seen on a real screen. If those modes look scrambled in vertical stripes,
   that is the cause; please report it.
-- The host works with the current calculator program and the two before it,
-  and says so if the calculator's is too old. Older ones miss the newest
-  features: the turned pointer for rotated pictures, and quarter-size video.
+- The host works with the current calculator program and the three before
+  it, and says so if the calculator's is too old. Older ones miss the newest
+  features: the turned pointer for rotated pictures, quarter-size video, and
+  compression that refers back to earlier data.
 - If the calculator ever rejects what the host sent, it briefly shows its
   waiting screen with a "Last link error code". That number says what was
   wrong (the list is in `calc/src/decode.h`) and is worth including in a bug

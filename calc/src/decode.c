@@ -197,7 +197,8 @@ void rd_expand(uint8_t *screen, const uint8_t *low, uint8_t bpp, uint8_t shift,
 
 /* ---- LZ4 -------------------------------------------------------------- */
 
-bool lz4_decode(const uint8_t *src, unsigned int src_len, uint8_t *dst, unsigned int dst_len) {
+bool lz4_decode(const uint8_t *src, unsigned int src_len, uint8_t *dst, unsigned int dst_len,
+                const uint8_t *history) {
     const uint8_t *ip = src, *iend = src + src_len;
     uint8_t *op = dst, *oend = dst + dst_len;
 
@@ -225,7 +226,7 @@ bool lz4_decode(const uint8_t *src, unsigned int src_len, uint8_t *dst, unsigned
         if (iend - ip < 2) return false;
         offset = ip[0] | ((unsigned int)ip[1] << 8);
         ip += 2;
-        if (!offset || offset > (unsigned int)(op - dst)) return false;
+        if (!offset || offset > (unsigned int)(op - history)) return false;
 
         len = token & 15;
         if (len == 15) {
@@ -254,12 +255,13 @@ bool lz4_decode(const uint8_t *src, unsigned int src_len, uint8_t *dst, unsigned
 /* ---- packets ---------------------------------------------------------- */
 
 static pk_read_fn pk_read;
-static uint8_t *pk_wire, *pk_plain;
-
 static pk_oob_fn pk_oob;
+static uint8_t *pk_wire, *pk_window;
+static unsigned int pk_pos; /* where in the window the next payload goes */
 
 static bool pk_more(rd_stream_t *s) {
     uint8_t head[2];
+    uint8_t *out;
     unsigned int n, plain_len;
 
     for (;;) {
@@ -277,29 +279,43 @@ static bool pk_more(rd_stream_t *s) {
         }
     }
 
+    /*
+     * Payloads are laid end to end in the window, so a compressed packet can
+     * copy from the ones before it. When the window is nearly full, the most
+     * recent PK_HISTORY bytes slide back to its start. (The previous payload
+     * has been fully consumed by now, so nothing still points into it.)
+     */
+    if (pk_pos > PK_WINDOW - PKT_MAX) {
+        memmove(pk_window, pk_window + pk_pos - PK_HISTORY, PK_HISTORY);
+        pk_pos = PK_HISTORY;
+    }
+    out = pk_window + pk_pos;
+
     if (n & PKT_LZ4) {
         n &= ~(unsigned int)PKT_LZ4;
         if (!pk_read(head, 2)) return false;
         plain_len = head[0] | ((unsigned int)head[1] << 8);
         if (!n || n > PKT_MAX || !plain_len || plain_len > PKT_MAX) FAIL(RD_ERR_PACKET);
         if (!pk_read(pk_wire, n)) return false;
-        if (!lz4_decode(pk_wire, n, pk_plain, plain_len)) FAIL(RD_ERR_LZ4);
+        if (!lz4_decode(pk_wire, n, out, plain_len, pk_window)) FAIL(RD_ERR_LZ4);
     } else {
         if (!n || n > PKT_MAX) FAIL(RD_ERR_PACKET);
-        if (!pk_read(pk_plain, n)) return false;
+        if (!pk_read(out, n)) return false;
         plain_len = n;
     }
-    s->p = pk_plain;
-    s->end = pk_plain + plain_len;
+    pk_pos += plain_len;
+    s->p = out;
+    s->end = out + plain_len;
     return true;
 }
 
-void pk_init(rd_stream_t *s, pk_read_fn read, pk_oob_fn oob, uint8_t *wire, uint8_t *plain) {
+void pk_init(rd_stream_t *s, pk_read_fn read, pk_oob_fn oob, uint8_t *wire, uint8_t *window) {
     pk_read = read;
     pk_oob = oob;
     pk_wire = wire;
-    pk_plain = plain;
-    s->p = s->end = plain;
+    pk_window = window;
+    pk_pos = 0;
+    s->p = s->end = window;
     s->more = pk_more;
 }
 

@@ -15,8 +15,8 @@ import time
 import numpy as np
 import serial
 
-from .encoder import (apply_move, cursor_packet, encode_frame, move_is_valid, move_op,
-                      packets)
+from .encoder import (Packer, apply_move, cursor_packet, encode_frame, move_is_valid,
+                      move_op)
 from .palette import MODE_ORDER, MODES, scaled_mode
 from .protocol import (CURSOR_HIDDEN, FRAME_WINDOW, KEY_GROUPS, MSG_ACK, MSG_BYE,
                        MSG_HELLO, MSG_KEYS, COMPATIBLE_VERSIONS, PROTO_VERSION)
@@ -41,7 +41,7 @@ _HELLO, _ACK = "hello", "ack"
 class Session:
     def __init__(self, port, renderer, injector, mapper, origin=(0, 0),
                  fps=20, dither=False, colors="256", lz4=True, video="auto", stats=0,
-                 video_fps=8, log=print):
+                 video_fps=8, history=True, log=print):
         self.port = port  # an open serial.Serial (or anything with read/write)
         self.renderer = renderer
         self.injector = injector
@@ -50,6 +50,8 @@ class Session:
         self.frame_interval = 1.0 / fps
         self.dither = dither
         self.lz4 = lz4
+        self.history = history  # let compressed packets refer back to earlier ones
+        self._packer = Packer(lz4)
         self.log = log
         self.video = "half" if video == "on" else video
         self.video_fps = video_fps  # below this at half size, automatic mode goes to quarter size
@@ -186,7 +188,7 @@ class Session:
         between them whenever it has changed, so the pointer keeps up even
         while a large frame is on its way.
         """
-        for packet in packets(messages, self.lz4):
+        for packet in self._packer.packets(messages):
             self._send_cursor()
             self.port.write(packet)
             self.bytes_sent += len(packet)
@@ -273,6 +275,8 @@ class Session:
                     self._streaming = True
                     self.shown = None
                     self._announce = True
+                    # The calculator starts each stream with an empty history.
+                    self._packer = Packer(self.lz4, self.history and self.calc_version >= 7)
                     credits = FRAME_WINDOW
                     continue
                 if event == _ACK:

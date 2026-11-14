@@ -65,13 +65,19 @@ typedef bool (*pk_read_fn)(uint8_t *dst, unsigned int len);
 typedef void (*pk_oob_fn)(const uint8_t *note);
 
 /*
- * Make `s` a stream of packet payloads. `wire` and `plain` are scratch
- * buffers of PKT_MAX bytes each. One packet stream at a time.
+ * Make `s` a stream of packet payloads, starting with an empty history.
+ * `wire` is a scratch buffer of PKT_MAX bytes and `window` one of PK_WINDOW
+ * bytes. One packet stream at a time.
  */
-void pk_init(rd_stream_t *s, pk_read_fn read, pk_oob_fn oob, uint8_t *wire, uint8_t *plain);
+void pk_init(rd_stream_t *s, pk_read_fn read, pk_oob_fn oob, uint8_t *wire, uint8_t *window);
 
-/* Decompress one LZ4 block that must expand to exactly `dst_len` bytes. */
-bool lz4_decode(const uint8_t *src, unsigned int src_len, uint8_t *dst, unsigned int dst_len);
+/*
+ * Decompress one LZ4 block that must expand to exactly `dst_len` bytes.
+ * Matches may reach back before `dst`, as far as `history` (which is `dst`
+ * itself for a block that stands alone).
+ */
+bool lz4_decode(const uint8_t *src, unsigned int src_len, uint8_t *dst, unsigned int dst_len,
+                const uint8_t *history);
 
 /* ---- pointer ---------------------------------------------------------- */
 

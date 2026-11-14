@@ -10,8 +10,8 @@ import struct
 
 import lz4.block as lz4_block
 
-from .protocol import (MSG_FRAME, OP_END, OP_LIT, OP_MOVE, OP_RUN, OP_SKIP, PKT_LZ4, PKT_MAX,
-                       PKT_OOB)
+from .protocol import (MSG_FRAME, OP_END, OP_LIT, OP_MOVE, OP_RUN, OP_SKIP, PK_HISTORY, PKT_LZ4,
+                       PKT_MAX, PKT_OOB)
 
 MIN_SKIP = 4  # unchanged gaps shorter than this are cheaper to resend
 MIN_RUN = 4  # equal-colour runs shorter than this are cheaper as literals
@@ -115,18 +115,79 @@ def encode_frame(new, old=None, prefix=b""):
     return body[:1] + prefix + body[1:]
 
 
+class Packer:
+    """Wraps host -> calculator bytes in packets, LZ4-compressing where it pays.
+
+    With `history`, a packet may copy from the payloads sent before it, which
+    the calculator keeps (protocol v7+). reset() whenever the calculator
+    starts over.
+    """
+
+    def __init__(self, lz4=True, history=False):
+        self.lz4, self.history = lz4, history
+        self._past = b""
+
+    def reset(self):
+        self._past = b""
+
+    def packets(self, data):
+        out = []
+        for start in range(0, len(data), PKT_MAX):
+            chunk = data[start:start + PKT_MAX]
+            packet = struct.pack("<H", len(chunk)) + chunk
+            if self.lz4 and len(chunk) > 32:
+                options = {"dict": self._past} if self._past else {}
+                packed = lz4_block.compress(chunk, mode="high_compression", store_size=False,
+                                            **options)
+                if len(packed) + 2 < len(chunk):
+                    packet = struct.pack("<HH", len(packed) | PKT_LZ4, len(chunk)) + packed
+            if self.history:
+                self._past = (self._past + chunk)[-PK_HISTORY:]
+            out.append(packet)
+        return out
+
+
+class Unpacker:
+    """Reference packet reader, mirroring the calculator. `read(n)` returns
+    exactly n bytes; pointer positions met on the way go to `on_cursor`."""
+
+    def __init__(self, read, on_cursor=None):
+        self._read, self._on_cursor = read, on_cursor
+        self._past = b""
+
+    def reset(self):
+        """Forget the history, as the calculator does when it says HELLO."""
+        self._past = b""
+
+    def payload(self):
+        read = self._read
+        while True:
+            (n,) = struct.unpack("<H", read(2))
+            if not n & PKT_OOB:
+                break
+            if n != 3 | PKT_OOB:
+                raise ValueError("bad out-of-band packet")
+            spot = struct.unpack("<HB", read(3))
+            if self._on_cursor:
+                self._on_cursor(spot)
+        if n & PKT_LZ4:
+            (size,) = struct.unpack("<H", read(2))
+            n &= ~PKT_LZ4
+            if not 0 < n <= PKT_MAX or not 0 < size <= PKT_MAX:
+                raise ValueError("bad packet header")
+            options = {"dict": self._past} if self._past else {}
+            plain = lz4_block.decompress(read(n), uncompressed_size=size, **options)
+        else:
+            if not 0 < n <= PKT_MAX:
+                raise ValueError("bad packet header")
+            plain = read(n)
+        self._past = (self._past + plain)[-PK_HISTORY:]
+        return plain
+
+
 def packets(data, lz4=True):
-    """Wrap host -> calculator bytes in packets, LZ4-compressing where it pays."""
-    out = []
-    for start in range(0, len(data), PKT_MAX):
-        chunk = data[start:start + PKT_MAX]
-        if lz4 and len(chunk) > 32:
-            packed = lz4_block.compress(chunk, mode="high_compression", store_size=False)
-            if len(packed) + 2 < len(chunk):
-                out.append(struct.pack("<HH", len(packed) | PKT_LZ4, len(chunk)) + packed)
-                continue
-        out.append(struct.pack("<H", len(chunk)) + chunk)
-    return out
+    """Packets that each stand alone (no history)."""
+    return Packer(lz4).packets(data)
 
 
 def packetize(data, lz4=True):
@@ -139,26 +200,8 @@ def cursor_packet(x, y):
 
 
 def unpacketize(read, on_cursor=None):
-    """Reference packet reader. `read(n)` returns exactly n bytes. Returns the
-    next payload, passing any pointer positions met on the way to `on_cursor`."""
-    while True:
-        (n,) = struct.unpack("<H", read(2))
-        if not n & PKT_OOB:
-            break
-        if n != 3 | PKT_OOB:
-            raise ValueError("bad out-of-band packet")
-        spot = struct.unpack("<HB", read(3))
-        if on_cursor:
-            on_cursor(spot)
-    if n & PKT_LZ4:
-        (size,) = struct.unpack("<H", read(2))
-        n &= ~PKT_LZ4
-        if not 0 < n <= PKT_MAX or not 0 < size <= PKT_MAX:
-            raise ValueError("bad packet header")
-        return lz4_block.decompress(read(n), uncompressed_size=size)
-    if not 0 < n <= PKT_MAX:
-        raise ValueError("bad packet header")
-    return read(n)
+    """One payload from a stream of stand-alone packets."""
+    return Unpacker(read, on_cursor).payload()
 
 
 def decode_frame(data, fb, stride=320):

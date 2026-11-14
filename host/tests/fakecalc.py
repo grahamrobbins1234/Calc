@@ -7,7 +7,7 @@ import threading
 
 import numpy as np
 
-from tiremote.encoder import apply_move, unpacketize
+from tiremote.encoder import Unpacker, apply_move
 from tiremote.palette import MODES, scaled_mode
 from tiremote.protocol import (LCD_H, LCD_W, MSG_ACK, MSG_BYE, MSG_FRAME, MSG_HELLO,
                                MSG_KEYS, MSG_MODE, MSG_PALETTE, MSG_SCALE, OP_END, OP_LIT, OP_MOVE, OP_RUN,
@@ -36,6 +36,7 @@ class FakeCalc:
         self.wire_bytes = 0
         self.error = None
         self._plain = b""
+        self._unpacker = Unpacker(self._raw, self._on_cursor)
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
@@ -46,6 +47,8 @@ class FakeCalc:
         os.write(self.fd, bytes(data))
 
     def hello(self, version=PROTO_VERSION):
+        # Like the real program: forget the old stream, start with an empty history.
+        self._unpacker.reset()
         self.send(MSG_HELLO, version)
 
     def ack(self):
@@ -81,7 +84,7 @@ class FakeCalc:
 
     def _get(self, count):
         while len(self._plain) < count:
-            self._plain += unpacketize(self._raw, self._on_cursor)
+            self._plain += self._unpacker.payload()
         data, self._plain = self._plain[:count], self._plain[count:]
         return data
 

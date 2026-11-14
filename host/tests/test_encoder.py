@@ -7,7 +7,7 @@ import subprocess
 import numpy as np
 import pytest
 
-from tiremote.encoder import (apply_move, cursor_packet, decode_frame, encode_frame, move_op,
+from tiremote.encoder import (Packer, Unpacker, apply_move, cursor_packet, decode_frame, encode_frame, move_op,
                               packetize, packets, unpacketize)
 from tiremote.palette import MODES, half_mode, palette_rgb, quantize, scaled_mode
 from tiremote.protocol import (CURSOR_HIDDEN, MSG_FRAME, MSG_MODE, OP_END, PKT_LZ4,
@@ -244,6 +244,25 @@ def test_packets_roundtrip_and_compress():
     assert not struct.unpack_from("<H", packetize(noise))[0] & PKT_LZ4  # stored, not expanded
 
 
+def test_history_makes_packets_smaller_and_roundtrips():
+    # Two half-size pictures shown alternately: each is small enough that the
+    # previous showing is still within the history.
+    rng = np.random.default_rng(21)
+    pictures = [rng.integers(0, 256, 9000, dtype=np.uint8) for _ in range(2)]
+    plain = [encode_frame(pictures[i % 2]) for i in range(7)]
+    alone = sum(len(packetize(message)) for message in plain)
+    packer = Packer(history=True)
+    wire = b"".join(b"".join(packer.packets(message)) for message in plain)
+    assert len(wire) < alone * 0.6, "pictures seen before should cost much less"
+
+    stream = io.BytesIO(wire)
+    unpacker = Unpacker(stream.read)
+    out = b""
+    while stream.tell() < len(wire):
+        out += unpacker.payload()
+    assert out == b"".join(plain)
+
+
 # -- the calculator's C code ----------------------------------------------------
 
 
@@ -393,6 +412,47 @@ def test_c_low_resolution_modes(harness, name, shift):
     wire += packetize(enter(full) + encode_frame(last, small.enlarged(frame)))
     status, _, lifted, _ = run_calc(harness, wire)
     assert status == 0 and run_calc.shift == 0 and (lifted == last).all()
+
+
+@pytest.mark.parametrize("lz4", [True, False])
+def test_c_packets_with_history(harness, lz4):
+    """Compressed packets that copy from earlier ones, through far more data
+    than the calculator's window holds (so it slides many times)."""
+    rng = np.random.default_rng(31)
+    doc = page(22)
+    packer = Packer(lz4=lz4, history=True)
+    mode = MODES["256"]
+    wire = b"".join(packer.packets(mode.mode_message() + mode.palette_message()))
+    model, sent = None, 0
+    for step in range(60):
+        if step % 5 == 4:  # noise: stored packets must enter the history too
+            frame = rng.integers(0, 256, 76800, dtype=np.uint8)
+        else:
+            frame = doc[int(rng.integers(0, 360)):][:240].ravel().copy()
+        message = encode_frame(frame, model if step % 3 else None)
+        for packet in packer.packets(message):
+            if rng.random() < 0.3:
+                wire += cursor_packet(int(rng.integers(0, 320)), int(rng.integers(0, 240)))
+            wire += packet
+        sent += len(message)
+        model = frame
+    assert sent > 20 * 40960
+    status, _, lifted, _ = run_calc(harness, wire)
+    assert status == 0 and (lifted == model).all()
+
+    if lz4:
+        # A packet pointing further back than anything sent must be refused,
+        # and random damage must never crash the decoder (sanitizers are on).
+        first = Packer(history=True)
+        first.packets(bytes(range(256)) * 20)
+        orphan = b"".join(first.packets(bytes(range(256)) * 20))  # copies from the unsent packet
+        assert run_calc(harness, orphan)[0] == 4
+        head = wire[:60000]
+        for _ in range(150):
+            broken = bytearray(head)
+            for _ in range(rng.integers(1, 4)):
+                broken[rng.integers(0, len(broken))] = rng.integers(0, 256)
+            assert run_calc(harness, bytes(broken))[0] in (0, 4)
 
 
 def test_c_rejects_unknown_scale(harness):

@@ -17,7 +17,7 @@ static uint8_t fb[SCREEN_W * SCREEN_H];
 static uint8_t half_fb[SCREEN_W * SCREEN_H / 4];
 static uint8_t low_shift, low_shift_next = 1;
 static bool picture;
-static uint8_t wire[PKT_MAX], plain[PKT_MAX];
+static uint8_t wire[PKT_MAX], window[PK_WINDOW];
 static cursor_t cursor;
 static uint8_t bpp = 8;
 static unsigned int cursor_x, cursor_y = CURSOR_HIDDEN;
@@ -104,7 +104,7 @@ int main(void) {
     uint8_t head[5];
 
     memset(fb, 0xA5, sizeof fb); /* video memory starts with leftovers */
-    pk_init(&s, read_exact, pointer_moved, wire, plain);
+    pk_init(&s, read_exact, pointer_moved, wire, window);
     if (!serve(&s)) {
         fprintf(stderr, "%d", rd_error);
         return 4;

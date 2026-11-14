@@ -40,15 +40,19 @@
  * (320x240 at 8 bits per pixel), so the second half holds the packet buffers.
  */
 #define FB       ((uint8_t *)gfx_vram)
-#define PKT_WIRE (FB + SCREEN_W * SCREEN_H)
-#define PKT_PLAIN (PKT_WIRE + PKT_MAX)
-#define LOW_FB   (PKT_PLAIN + PKT_MAX) /* the small picture in the low-resolution modes */
+#define PKT_WIRE   (FB + SCREEN_W * SCREEN_H)
+#define PKT_WINDOW (PKT_WIRE + PKT_MAX)
+#define LOW_FB     (PKT_WINDOW + PK_WINDOW) /* the small picture in the low-resolution modes */
 
 static srl_device_t srl;
 static bool has_srl;
 static usb_device_t pending_dev; /* serial device waiting to be opened */
 
-static uint8_t srl_buf[2048];
+/*
+ * Half of this is the USB receive buffer. It is large so data keeps arriving
+ * while a packet is being decompressed and drawn.
+ */
+static uint8_t srl_buf[16384];
 static uint8_t palette_buf[512];
 
 static uint8_t bpp = 8;
@@ -181,7 +185,7 @@ static void rx_drain(void) {
     while (has_srl && clock() - quiet < CLOCKS_PER_SEC / 10) {
         usb_HandleEvents();
         if (!has_srl) break;
-        if (srl_Read(&srl, PKT_PLAIN, PKT_MAX) > 0) quiet = clock();
+        if (srl_Read(&srl, PKT_WIRE, PKT_MAX) > 0) quiet = clock();
     }
 }
 
@@ -243,7 +247,7 @@ static void serve(void) {
     rd_stream_t s;
     uint8_t hello[2] = {MSG_HELLO, PROTO_VERSION};
 
-    pk_init(&s, rx_exact, pointer_moved, PKT_WIRE, PKT_PLAIN);
+    pk_init(&s, rx_exact, pointer_moved, PKT_WIRE, PKT_WINDOW);
     low_shift_next = 1;
     picture = false;
     cursor_y = CURSOR_HIDDEN;
