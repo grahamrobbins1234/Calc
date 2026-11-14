@@ -62,10 +62,14 @@ def parse_args(argv=None):
                         help="starting colour mode: 256 colours, 16c = 16 colours or 16 = 16 "
                              "greys (both half the data), 2 = black and white (an eighth); "
                              "[2nd]+[clear] cycles it")
-    parser.add_argument("--video", choices=["auto", "on", "off"], default="auto",
-                        help="half-resolution video mode for games and video: auto = only "
-                             "while most of the picture keeps changing (default); "
-                             "[2nd]+[del] cycles it")
+    parser.add_argument("--video", choices=["auto", "half", "quarter", "off", "on"],
+                        default="auto",
+                        help="low-resolution video mode for games and video: auto = only "
+                             "while most of the picture keeps changing (default), half or "
+                             "quarter = always that size; [2nd]+[del] cycles it")
+    parser.add_argument("--video-fps", type=float, default=8, metavar="FPS",
+                        help="in automatic video mode, go from half to quarter size when "
+                             "the link manages fewer frames per second than this (default 8)")
     parser.add_argument("--stats", type=float, nargs="?", const=5.0, default=0, metavar="SECONDS",
                         help="print frame rate and data rate every few seconds (default 5)")
     parser.add_argument("--no-lz4", action="store_true",
@@ -190,7 +194,8 @@ def main(argv=None):
             print("Connected: %s." % label)
             session = Session(port, renderer, injector, mapper, origin,
                               fps=args.fps, dither=args.dither, colors=args.colors,
-                              lz4=not args.no_lz4, video=args.video, stats=args.stats)
+                              lz4=not args.no_lz4, video=args.video, stats=args.stats,
+                              video_fps=args.video_fps)
             started = time.monotonic()
             try:
                 error = session.run()

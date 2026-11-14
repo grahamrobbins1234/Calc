@@ -172,18 +172,26 @@ static void double_row(uint8_t *dst, const uint8_t *src, unsigned int n, uint8_t
     }
 }
 
-void rd_expand(uint8_t *screen, const uint8_t *half, uint8_t bpp, unsigned int lo,
-               unsigned int hi) {
-    unsigned int half_stride = SCREEN_W / 2 * bpp / 8;
-    unsigned int stride = half_stride * 2;
-    unsigned int row, last;
+void rd_expand(uint8_t *screen, const uint8_t *low, uint8_t bpp, uint8_t shift,
+               unsigned int lo, unsigned int hi) {
+    static uint8_t twice[SCREEN_W / 2]; /* a quarter-size row, doubled once */
+    unsigned int low_stride = (SCREEN_W >> shift) * bpp / 8;
+    unsigned int stride = SCREEN_W * bpp / 8;
+    unsigned int copies = (1u << shift) - 1;
+    unsigned int row, last, i;
 
     if (hi <= lo) return;
-    last = (hi - 1) / half_stride;
-    for (row = lo / half_stride; row <= last; row++) {
-        uint8_t *out = screen + row * 2 * stride;
-        double_row(out, half + row * half_stride, half_stride, bpp);
-        memcpy(out + stride, out, stride);
+    last = (hi - 1) / low_stride;
+    for (row = lo / low_stride; row <= last; row++) {
+        uint8_t *out = screen + (row << shift) * stride;
+        const uint8_t *src = low + row * low_stride;
+        if (shift == 2) {
+            double_row(twice, src, low_stride, bpp);
+            double_row(out, twice, low_stride * 2, bpp);
+        } else {
+            double_row(out, src, low_stride, bpp);
+        }
+        for (i = 1; i <= copies; i++) memcpy(out + i * stride, out, stride);
     }
 }
 

@@ -8,8 +8,9 @@ import threading
 import numpy as np
 
 from tiremote.encoder import apply_move, unpacketize
+from tiremote.palette import MODES, scaled_mode
 from tiremote.protocol import (LCD_H, LCD_W, MSG_ACK, MSG_BYE, MSG_FRAME, MSG_HELLO,
-                               MSG_KEYS, MSG_MODE, MSG_PALETTE, OP_END, OP_LIT, OP_MOVE, OP_RUN,
+                               MSG_KEYS, MSG_MODE, MSG_PALETTE, MSG_SCALE, OP_END, OP_LIT, OP_MOVE, OP_RUN,
                                PROTO_VERSION)
 
 
@@ -24,6 +25,8 @@ class FakeCalc:
         self.bpp = None
         self.half = False
         self.turn = 0
+        self.shift = 0
+        self._next_shift = 1
         self.mode_changes = 0
         self.fb = None
         self.palette = None
@@ -86,7 +89,7 @@ class FakeCalc:
         self.cursor = spot
 
     def _frame(self):
-        width = LCD_W // 2 if self.half else LCD_W
+        width = LCD_W >> self.shift
         stride = width * self.bpp // 8
         pos = 0
         while True:
@@ -114,14 +117,24 @@ class FakeCalc:
                 kind = self._get(1)[0]
                 if kind == MSG_MODE:
                     mode = self._get(1)[0]
+                    old = (self.bpp, self.shift)
                     self.bpp, self.half = mode & 0x1F, bool(mode & 0x80)
+                    self.shift = self._next_shift if self.half else 0
                     self.turn = mode >> 5 & 3
                     assert self.bpp in (8, 4, 1)
                     self.mode_changes += 1
-                    # Real video memory holds leftovers here, so start from noise.
-                    self.fb = np.random.default_rng(0).integers(
-                        0, 256, LCD_W * LCD_H * self.bpp // 8 // (4 if self.half else 1),
-                        dtype=np.uint8)
+                    size = (LCD_W >> self.shift) * (LCD_H >> self.shift) * self.bpp // 8
+                    if old[0] == self.bpp and old[1] and not self.shift:
+                        # Same depth, back to full size: the screen keeps the enlarged picture.
+                        mode_cls = {8: MODES["256"], 4: MODES["16"], 1: MODES["2"]}[self.bpp]
+                        small = scaled_mode(mode_cls, old[1])
+                        self.fb = small.enlarged(self.fb).copy()
+                    else:
+                        # Otherwise video memory holds leftovers, so start from noise.
+                        self.fb = np.random.default_rng(0).integers(0, 256, size, dtype=np.uint8)
+                elif kind == MSG_SCALE:
+                    self._next_shift = self._get(1)[0]
+                    assert self._next_shift in (1, 2)
                 elif kind == MSG_PALETTE:
                     count = self._get(1)[0] or 256
                     self.palette = self._get(count * 2)

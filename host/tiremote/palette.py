@@ -7,7 +7,7 @@ because desktops are mostly grey and the cube alone has almost none.
 
 import numpy as np
 
-from .protocol import LCD_H, LCD_W, MODE_HALF, MODE_TURN_SHIFT, MSG_MODE, MSG_PALETTE
+from .protocol import LCD_H, LCD_W, MODE_HALF, MODE_TURN_SHIFT, MSG_MODE, MSG_PALETTE, MSG_SCALE
 
 R_LEVELS, G_LEVELS, B_LEVELS = 6, 8, 5
 CUBE_SIZE = R_LEVELS * G_LEVELS * B_LEVELS  # 240
@@ -103,7 +103,11 @@ class ColorMode:
     label = ""  # short form for the status line
     bpp = 8
     width, height = LCD_W, LCD_H  # size of the picture the frames describe
-    half = False
+    shift = 0  # 1: half-size picture, 2: quarter-size, enlarged by the calculator
+
+    @property
+    def half(self):
+        return self.shift > 0
 
     @property
     def stride(self):
@@ -117,6 +121,10 @@ class ColorMode:
         """`turns`: quarter-turns clockwise the picture is rotated by."""
         return bytes([MSG_MODE, self.bpp | (MODE_HALF if self.half else 0)
                       | (turns & 3) << MODE_TURN_SHIFT])
+
+    def scale_message(self):
+        """Says how small this mode's pictures are (needed for quarter size)."""
+        return bytes([MSG_SCALE, self.shift]) if self.shift else b""
 
     def palette_message(self):
         colours = self.palette_rgb().astype(np.uint16)
@@ -137,6 +145,9 @@ class Colour256(ColorMode):
     def pack(self, rgb, dither=False):
         return quantize(rgb, dither).ravel()
 
+    def pack_indices(self, index):
+        return np.ascontiguousarray(index, dtype=np.uint8).ravel()
+
     def unpack(self, fb):
         return np.asarray(fb).reshape(self.height, self.width)
 
@@ -155,6 +166,9 @@ class Grey16(ColorMode):
             luma = luma + _bayer(*luma.shape) * 17
         level = np.clip((luma * 15 + 127) // 255, 0, 15).astype(np.uint8)
         return (level[:, 0::2] | (level[:, 1::2] << 4)).ravel()
+
+    def pack_indices(self, index):
+        return (index[:, 0::2] | (index[:, 1::2] << 4)).astype(np.uint8).ravel()
 
     def unpack(self, fb):
         fb = np.asarray(fb).reshape(self.height, -1)
@@ -221,32 +235,52 @@ class Mono(ColorMode):
             luma = luma + _bayer(*luma.shape) * 255
         return np.packbits(luma >= 128, axis=1, bitorder="little").ravel()
 
+    def pack_indices(self, index):
+        return np.packbits(index.astype(bool), axis=1, bitorder="little").ravel()
+
     def unpack(self, fb):
         fb = np.asarray(fb).reshape(self.height, -1)
         return np.unpackbits(fb, axis=1, bitorder="little")
 
 
+_scaled = {}
+
+
+def scaled_mode(mode, shift):
+    """The low-resolution ("video") version of a colour mode: a picture of
+    1/2 (shift 1) or 1/4 (shift 2) the width and height, which the
+    calculator enlarges. A quarter or a sixteenth of the data per frame, for
+    pictures that change all over, such as games."""
+    base = MODES[mode.name]
+    if not shift:
+        return base
+    if (base.name, shift) not in _scaled:
+        factor = 1 << shift
+
+        class Scaled(type(base)):
+            width, height = LCD_W >> shift, LCD_H >> shift
+
+            def pack(self, rgb, dither=False):
+                h, w = rgb.shape[:2]
+                small = rgb.reshape(h // factor, factor, w // factor, factor, 3)
+                return super().pack(small.mean(axis=(1, 3)).astype(np.uint8), dither)
+
+            def to_rgb(self, fb):
+                small = super().to_rgb(fb)
+                return small.repeat(factor, axis=0).repeat(factor, axis=1)
+
+            def enlarged(self, fb):
+                """The full-size framebuffer the calculator shows for `fb`."""
+                index = self.unpack(fb).repeat(factor, axis=0).repeat(factor, axis=1)
+                return base.pack_indices(index)
+
+        Scaled.shift = shift
+        _scaled[base.name, shift] = Scaled()
+    return _scaled[base.name, shift]
+
+
 def half_mode(mode):
-    """The half-resolution ("video") version of a colour mode: a 160x120
-    picture the calculator shows with every pixel doubled. A quarter of the
-    data per frame, for pictures that change all over, such as games."""
-    if mode.half:
-        return mode
-
-    class Half(type(mode)):
-        width, height = LCD_W // 2, LCD_H // 2
-        half = True
-
-        def pack(self, rgb, dither=False):
-            h, w = rgb.shape[:2]
-            small = rgb.reshape(h // 2, 2, w // 2, 2, 3).mean(axis=(1, 3)).astype(np.uint8)
-            return super().pack(small, dither)
-
-        def to_rgb(self, fb):
-            small = super().to_rgb(fb)
-            return small.repeat(2, axis=0).repeat(2, axis=1)
-
-    return Half()
+    return scaled_mode(mode, 1)
 
 
 MODES = {mode.name: mode for mode in (Colour256(), Colour16(), Grey16(), Mono())}

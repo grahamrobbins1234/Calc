@@ -79,56 +79,114 @@ def test_auto_video_mode_follows_activity():
     try:
         calc.hello()
         assert wait_for(lambda: calc.frames >= 1 and in_sync(calc, session))
-        assert not calc.half and calc.fb.size == 76800
+        assert calc.shift == 0 and calc.fb.size == 76800
 
-        # The picture starts changing everywhere: drop to half resolution.
+        # The picture starts changing everywhere: the very next frame is small.
+        frames, sent = calc.frames, calc.wire_bytes
         screen.playing = True
-        assert wait_for(lambda: calc.half)
+        assert wait_for(lambda: calc.shift == 1)
+        assert calc.wire_bytes - sent < 30000, "no full-size frame of the busy picture was sent"
         assert calc.fb.size == 19200 and calc.bpp == 8
         frames, sent = calc.frames, calc.wire_bytes
-        time.sleep(1.0)
-        assert calc.half, "must stay in video mode while the picture keeps changing"
+        time.sleep(0.8)
+        assert calc.shift == 1, "must stay in video mode while the picture keeps changing"
         per_frame = (calc.wire_bytes - sent) / max(1, calc.frames - frames)
         assert calc.frames - frames >= 5 and per_frame < 19200 + 300
 
-        # It settles: full detail comes back and matches exactly.
+        # It settles: full detail comes back, as changes to the enlarged picture.
         screen.playing = False
-        assert wait_for(lambda: not calc.half and in_sync(calc, session))
+        assert wait_for(lambda: calc.shift == 0 and in_sync(calc, session))
         assert calc.fb.size == 76800
         changes = calc.mode_changes
         time.sleep(1.0)
         assert calc.mode_changes == changes, "a still picture must not flip modes"
         reports = [line for line in LOG if "fps" in line]
-        assert any("half-res" in line for line in reports) and any("KB/s" in line for line in reports)
+        assert any("half-size" in line for line in reports)
+        assert calc.error is None
+    finally:
+        finish()
+
+
+def test_slow_link_goes_to_quarter_size():
+    # A calculator that draws only ~5 frames a second: half size cannot keep up.
+    screen, session, calc, finish = start("auto")
+    try:
+        calc.auto_ack = False
+        calc.hello()
+        stop = threading.Event()
+
+        def slow_acks():
+            seen = 0
+            while not stop.is_set():
+                if calc.frames > seen:
+                    time.sleep(0.2)
+                    calc.ack()
+                    seen += 1
+                else:
+                    time.sleep(0.01)
+
+        threading.Thread(target=slow_acks, daemon=True).start()
+        assert wait_for(lambda: calc.frames >= 1)
+        screen.playing = True
+        assert wait_for(lambda: calc.shift == 1)
+        assert wait_for(lambda: calc.shift == 2, timeout=6), "should step down to quarter size"
+        assert calc.fb.size == 4800
+        # After a short pause it goes straight back to quarter size, not via half.
+        screen.playing = False
+        assert wait_for(lambda: calc.shift == 0, timeout=6)
+        seen_half = []
+        screen.playing = True
+        assert wait_for(lambda: seen_half.append(calc.shift) or calc.shift == 2, timeout=6)
+        assert 1 not in seen_half
+        stop.set()
+        assert calc.error is None
+    finally:
+        finish()
+
+
+def test_older_calculator_program_gets_half_size_and_full_refresh():
+    screen, session, calc, finish = start("quarter")
+    try:
+        calc.hello(version=5)
+        assert wait_for(lambda: calc.shift == 1 and in_sync(calc, session))
+        calc.keys("2nd")  # quarter -> off
+        calc.keys("2nd", "del")
+        calc.keys()
+        assert wait_for(lambda: calc.shift == 0 and in_sync(calc, session))
         assert calc.error is None
     finally:
         finish()
 
 
 def test_video_mode_can_be_forced_and_cycled():
-    screen, session, calc, finish = start("on")
+    screen, session, calc, finish = start("half")
     try:
         calc.hello()
-        assert wait_for(lambda: calc.half and in_sync(calc, session))
+        assert wait_for(lambda: calc.shift == 1 and in_sync(calc, session))
 
-        calc.keys("2nd")  # [2nd]+[del]: on -> off
-        calc.keys("2nd", "del")
-        calc.keys()
-        assert wait_for(lambda: session.video == "off" and not calc.half and in_sync(calc, session))
+        def press_video_key():
+            calc.keys("2nd")  # [2nd]+[del]
+            calc.keys("2nd", "del")
+            calc.keys()
+
+        press_video_key()  # half -> quarter
+        assert wait_for(lambda: session.video == "quarter" and calc.shift == 2
+                        and in_sync(calc, session))
+        press_video_key()  # quarter -> off
+        assert wait_for(lambda: session.video == "off" and calc.shift == 0
+                        and in_sync(calc, session))
         screen.playing = True
         time.sleep(0.8)
-        assert not calc.half, "'off' never drops resolution"
+        assert calc.shift == 0, "'off' never drops resolution"
 
-        calc.keys("2nd")  # off -> auto, which now reacts to the busy picture
-        calc.keys("2nd", "del")
-        calc.keys()
-        assert wait_for(lambda: session.video == "auto" and calc.half)
+        press_video_key()  # off -> auto, which now reacts to the busy picture
+        assert wait_for(lambda: session.video == "auto" and calc.shift >= 1)
 
         # Colour mode changes carry over into video mode.
         calc.keys("2nd")
         calc.keys("2nd", "clear")
         calc.keys()
-        assert wait_for(lambda: calc.half and calc.bpp == 4 and calc.fb.size == 9600)
+        assert wait_for(lambda: calc.shift >= 1 and calc.bpp == 4)
         assert calc.error is None
     finally:
         finish()

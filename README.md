@@ -75,7 +75,8 @@ a different order, or unplug and replug, both sides reconnect on their own.
 | `--fps N` | frame rate cap (default 20) |
 | `--view-only` | show the screen but ignore the calculator's keys |
 | `--colors N` | starting colour mode: `256` (default), `16c` (16 colours), `16` (16 greys) or `2` (black and white) |
-| `--video MODE` | half-resolution video mode: `auto` (default), `on` or `off` |
+| `--video MODE` | low-resolution video mode: `auto` (default), `half`, `quarter` or `off` |
+| `--video-fps N` | in automatic video mode, step down to quarter size below this frame rate (default 8) |
 | `--dither` | dithered colours: smoother gradients, more data per frame |
 | `--stats [SECONDS]` | print frame rate and data rate every few seconds while running |
 | `--no-lz4` | do not LZ4-compress the stream (if the calculator turns out faster without) |
@@ -104,12 +105,20 @@ pixel is one calculator pixel. Zoomed views follow the mouse pointer. The
 status line in the bottom-left corner shows the current layer, arrow mode,
 colour mode and zoom.
 
-**Video mode** is for games and video, where the whole picture changes every
-frame. The host notices this and drops to half resolution (160x120, shown
-doubled), which is a quarter of the data per frame; when the picture settles
-for about half a second it sends the full-detail picture again. Text is not
-readable while it is active, which is why it is automatic. `[2nd]`+`[del]`
-forces it on or off.
+**Video mode** is for games, video and big scene changes, where most of the
+picture changes at once. Instead of making you wait for a full-detail frame,
+the host sends a small picture that the calculator enlarges, and follows it
+with the sharp one once things settle for about half a second:
+
+- **Half size** (160x120): a quarter of the data per frame. A big change
+  such as switching windows appears at once, blurry, then sharpens.
+- **Quarter size** (80x60): a sixteenth of the data. In automatic mode the
+  host steps down to this only when it measures that half size is getting
+  fewer than 8 frames a second through the link (`--video-fps` changes
+  that), which is what fast 3D games tend to need.
+
+Text is not readable while it is active, which is why it is automatic.
+`[2nd]`+`[del]` cycles auto → always half → always quarter → off.
 
 If updates feel slow, drop the colour depth with `[2nd]`+`[clear]`: 16
 colours or 16 greys send half the data of 256 colours, and black-and-white
@@ -126,7 +135,7 @@ at the cost of some of the saving.
 | `[trace]` / `[graph]` | Scroll up / down |
 | `[zoom]` | Zoom in; `[2nd]`+`[zoom]` zooms out |
 | `[2nd]`+`[clear]` | Cycle colour mode: 256 colours → 16 colours → 16 greys → black and white |
-| `[2nd]`+`[del]` | Cycle video mode: auto → always on → off |
+| `[2nd]`+`[del]` | Cycle video mode: auto → half size → quarter size → off |
 | `[mode]` | Switch the arrows between mouse movement and the arrow keys |
 | `[alpha]` | Toggle the letter layer (the green letters above the keys) |
 | `[2nd]` | Shift (hold) |
@@ -165,9 +174,11 @@ To change any of this, edit the two dictionaries at the top of
   `move` operations that shift a block of the picture up, down or sideways.
   The host uses them when something scrolls and when a zoomed view pans to
   follow the pointer, so only the newly exposed strip is sent.
-- **Video mode:** in half-resolution mode frames describe a 160x120 picture
-  kept in spare video memory; after each frame the calculator redraws just
-  the rows that changed, doubling every pixel.
+- **Video mode:** in the low-resolution modes frames describe a 160x120 or
+  80x60 picture kept in spare video memory; after each frame the calculator
+  redraws just the rows that changed, enlarging every pixel. When the host
+  returns to full size it sends the sharp picture as changes to the enlarged
+  one already on screen, so flat areas are not sent again.
 - **Compression:** host data travels in packets of up to 8 KB, each
   LZ4-compressed when that makes it smaller. The packet buffers live in the
   unused half of the calculator's video memory.
@@ -217,9 +228,9 @@ with sanitizers on, and check it against the Python side.
   byte is taken from the LCD controller's documentation and has not been
   seen on a real screen. If those modes look scrambled in vertical stripes,
   that is the cause; please report it.
-- The host works with the current calculator program and the one before it,
-  and says so if the calculator's is too old. With the older one, the
-  pointer arrow is not turned when the picture is rotated.
+- The host works with the current calculator program and the two before it,
+  and says so if the calculator's is too old. Older ones miss the newest
+  features: the turned pointer for rotated pictures, and quarter-size video.
 - If the calculator ever rejects what the host sent, it briefly shows its
   waiting screen with a "Last link error code". That number says what was
   wrong (the list is in `calc/src/decode.h`) and is worth including in a bug

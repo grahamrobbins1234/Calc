@@ -2,7 +2,7 @@
  * Native test harness for calc/src/decode.c: behaves like the calculator's
  * serve() loop on a host -> calculator byte stream read from stdin.
  *
- * stdout: mode byte, cursor x (2 bytes), cursor y, then the framebuffer with the
+ * stdout: mode byte, cursor x (2 bytes), cursor y, low-res shift, then the framebuffer with the
  * pointer lifted, then the framebuffer with the pointer drawn.
  * Exit status 0 on clean end of input, 4 if the stream was rejected
  * (the reason, rd_error, goes to stderr).
@@ -15,7 +15,8 @@
 
 static uint8_t fb[SCREEN_W * SCREEN_H];
 static uint8_t half_fb[SCREEN_W * SCREEN_H / 4];
-static bool half_res;
+static uint8_t low_shift, low_shift_next = 1;
+static bool picture;
 static uint8_t wire[PKT_MAX], plain[PKT_MAX];
 static cursor_t cursor;
 static uint8_t bpp = 8;
@@ -53,14 +54,21 @@ static bool serve(rd_stream_t *s) {
         if (!rd_read(s, &type, 1)) return at_eof; /* running out between messages is fine */
 
         switch (type) {
+        case MSG_SCALE:
+            if (!rd_read(s, arg, 1)) return false;
+            if (arg[0] != 1 && arg[0] != 2) return false;
+            low_shift_next = arg[0];
+            break;
         case MSG_MODE:
             if (!rd_read(s, arg, 1)) return false;
-            half_res = (arg[0] & MODE_HALF) != 0;
+            if ((arg[0] & MODE_BPP_MASK) == bpp && picture) pointer_hide();
+            low_shift = (arg[0] & MODE_HALF) ? low_shift_next : 0;
             cursor.turn = (arg[0] & MODE_TURN_MASK) >> MODE_TURN_SHIFT;
             arg[0] &= MODE_BPP_MASK;
             if (arg[0] != 8 && arg[0] != 4 && arg[0] != 1) return false;
             cursor.shown = false;
             bpp = arg[0];
+            picture = true;
             break;
         case MSG_PALETTE:
             if (!rd_read(s, arg, 1)) return false;
@@ -68,13 +76,14 @@ static bool serve(rd_stream_t *s) {
             if (!rd_read(s, palette, count * 2)) return false;
             break;
         case MSG_FRAME:
-            if (half_res) {
-                if (!rd_decode_frame(s, half_fb, SCREEN_W * SCREEN_H / 4 * bpp / 8,
-                                     SCREEN_W / 2 * bpp / 8, NULL))
+            if (low_shift) {
+                unsigned int low_stride = (SCREEN_W >> low_shift) * bpp / 8;
+                if (!rd_decode_frame(s, half_fb, low_stride * (SCREEN_H >> low_shift),
+                                     low_stride, NULL))
                     return false;
                 if (rd_dirty_hi > rd_dirty_lo) {
                     pointer_hide();
-                    rd_expand(fb, half_fb, bpp, rd_dirty_lo, rd_dirty_hi);
+                    rd_expand(fb, half_fb, bpp, low_shift, rd_dirty_lo, rd_dirty_hi);
                 }
             } else {
                 if (!rd_decode_frame(s, fb, SCREEN_W * SCREEN_H * bpp / 8, SCREEN_W * bpp / 8,
@@ -92,7 +101,7 @@ static bool serve(rd_stream_t *s) {
 int main(void) {
     rd_stream_t s;
     unsigned int size;
-    uint8_t head[4];
+    uint8_t head[5];
 
     memset(fb, 0xA5, sizeof fb); /* video memory starts with leftovers */
     pk_init(&s, read_exact, pointer_moved, wire, plain);
@@ -102,7 +111,8 @@ int main(void) {
     }
 
     size = SCREEN_W * SCREEN_H * bpp / 8;
-    head[0] = (uint8_t)(bpp | (half_res ? MODE_HALF : 0) | (cursor.turn << MODE_TURN_SHIFT));
+    head[0] = (uint8_t)(bpp | (low_shift ? MODE_HALF : 0) | (cursor.turn << MODE_TURN_SHIFT));
+    head[4] = low_shift;
     head[1] = (uint8_t)cursor_x;
     head[2] = (uint8_t)(cursor_x >> 8);
     head[3] = (uint8_t)cursor_y;

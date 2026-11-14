@@ -49,12 +49,12 @@ extern bool rd_retouch;
 extern unsigned int rd_dirty_lo, rd_dirty_hi;
 
 /*
- * Half-resolution mode: `half` holds a 160x120 picture. Draw the rows that
- * cover its bytes [lo, hi) onto the 320x240 `screen`, each pixel doubled
- * in both directions.
+ * Low-resolution modes: `low` holds a picture of 1/2 (shift 1) or 1/4
+ * (shift 2) the screen's width and height. Draw the rows that cover its
+ * bytes [lo, hi) onto the 320x240 `screen`, every pixel enlarged to match.
  */
-void rd_expand(uint8_t *screen, const uint8_t *half, uint8_t bpp, unsigned int lo,
-               unsigned int hi);
+void rd_expand(uint8_t *screen, const uint8_t *low, uint8_t bpp, uint8_t shift,
+               unsigned int lo, unsigned int hi);
 
 /* ---- packets ---------------------------------------------------------- */
 

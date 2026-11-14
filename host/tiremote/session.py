@@ -6,6 +6,7 @@ calculator draws the previous one. Pointer positions are tiny separate
 messages sent as the pointer moves, independent of frames.
 """
 
+import collections
 import queue
 import struct
 import threading
@@ -16,20 +17,22 @@ import serial
 
 from .encoder import (apply_move, cursor_packet, encode_frame, move_is_valid, move_op,
                       packets)
-from .palette import MODE_ORDER, MODES, half_mode
+from .palette import MODE_ORDER, MODES, scaled_mode
 from .protocol import (CURSOR_HIDDEN, FRAME_WINDOW, KEY_GROUPS, MSG_ACK, MSG_BYE,
                        MSG_HELLO, MSG_KEYS, COMPATIBLE_VERSIONS, PROTO_VERSION)
 from .scroll import find_scroll, pan_move
 
 KEEPALIVE = 0.5  # send something at least this often so the calculator knows we are here
 
-# Automatic video mode: drop to half resolution while most of the picture
-# keeps changing (games, video), return to full detail once it settles.
-VIDEO_MODES = ["auto", "on", "off"]
-BUSY_FRACTION = 0.3  # a full-resolution frame this large (vs. the framebuffer) is "busy"
-BUSY_FRAMES = 2  # this many busy frames in a row switch to half resolution
-CALM_FRACTION = 0.15  # a half-resolution frame below this is "calm"
-CALM_TIME = 0.6  # seconds of calm before returning to full resolution
+# Video mode: send a small picture that the calculator enlarges, for content
+# that changes all over (games, video, big scene changes), then the sharp
+# picture once things settle.
+VIDEO_MODES = ["auto", "half", "quarter", "off"]
+BUSY_FRACTION = 0.3  # a full-size frame this large (vs. the framebuffer) is not sent: go small
+CALM_FRACTION = 0.15  # a small frame below this is "calm"
+CALM_TIME = 0.4  # seconds of calm before the sharp picture is sent
+SLOW_AFTER = 1.0  # seconds at half size before judging the frame rate
+REMEMBER = 20.0  # seconds a quarter-size verdict is remembered across pauses
 TICK = 1 / 60
 
 _HELLO, _ACK = "hello", "ack"
@@ -38,7 +41,7 @@ _HELLO, _ACK = "hello", "ack"
 class Session:
     def __init__(self, port, renderer, injector, mapper, origin=(0, 0),
                  fps=20, dither=False, colors="256", lz4=True, video="auto", stats=0,
-                 log=print):
+                 video_fps=8, log=print):
         self.port = port  # an open serial.Serial (or anything with read/write)
         self.renderer = renderer
         self.injector = injector
@@ -48,7 +51,8 @@ class Session:
         self.dither = dither
         self.lz4 = lz4
         self.log = log
-        self.video = video
+        self.video = "half" if video == "on" else video
+        self.video_fps = video_fps  # below this at half size, automatic mode goes to quarter size
         self.stats_interval = stats  # seconds between throughput reports; 0 = none
         self.mode = MODES[colors]  # the format currently on the wire (may be a half-res one)
         self.shown = None  # the calculator's framebuffer as we believe it to be
@@ -56,9 +60,12 @@ class Session:
         self.frames = 0
         self.bytes_sent = 0
         self._wanted_mode = self.mode  # the colour mode the user chose
-        self._busy = False  # automatic video mode is engaged
-        self._busy_frames = 0
+        self._level = 0  # automatic video mode: 0 = full size, 1 = half, 2 = quarter
         self._calm_since = 0.0
+        self._busy_since = 0.0
+        self._recent = collections.deque()  # when the last second's frames were sent
+        self._remembered = (1, -REMEMBER)  # (level, when) automatic mode last left video mode
+        self._announce = True  # the next frame must be preceded by the mode
         self._streaming = False  # a HELLO has been answered
         self._cursor_sent = None
         self._events = queue.Queue()
@@ -79,28 +86,38 @@ class Session:
         self._wanted_mode = MODES[names[(names.index(self._wanted_mode.name) + 1) % len(names)]]
 
     def cycle_video(self):
-        """auto -> always half resolution -> never."""
+        """auto -> always half size -> always quarter size -> never."""
         self.video = VIDEO_MODES[(VIDEO_MODES.index(self.video) + 1) % len(VIDEO_MODES)]
 
     def _target_mode(self, now):
         """The format the next frame should be in."""
-        if self._busy and now - self._calm_since > CALM_TIME:
-            self._busy = False
-            self._busy_frames = 0
-        half = self.video == "on" or (self.video == "auto" and self._busy)
-        return half_mode(self._wanted_mode) if half else self._wanted_mode
+        if self.video == "auto":
+            if self._level and now - self._calm_since > CALM_TIME:
+                self._remembered = (self._level, now)
+                self._level = 0
+            shift = self._level
+        else:
+            shift = {"half": 1, "quarter": 2}.get(self.video, 0)
+        # Quarter size needs a calculator program that knows about it.
+        return scaled_mode(self._wanted_mode, min(shift, 2 if self.calc_version >= 6 else 1))
 
-    def _watch_activity(self, size, fresh, now):
-        """Feed the automatic video mode with the size of the frame just encoded."""
-        if self.mode.half:
-            if fresh or size > CALM_FRACTION * self.mode.fb_size:
-                self._calm_since = now
-        elif not fresh:
-            busy = size > BUSY_FRACTION * self.mode.fb_size
-            self._busy_frames = self._busy_frames + 1 if busy else 0
-            if self._busy_frames >= BUSY_FRAMES:
-                self._busy = True
-                self._calm_since = now
+    def _go_small(self, now):
+        """Automatic mode: the picture is changing too much for full size."""
+        level, when = self._remembered
+        self._level = level if now - when < REMEMBER else 1
+        self._calm_since = self._busy_since = now
+        self._recent.clear()
+
+    def _watch_frame_rate(self, now):
+        """Automatic mode, after a small frame was sent: if half size still
+        cannot keep up on this link, go to quarter size."""
+        self._recent.append(now)
+        while now - self._recent[0] > 1.0:
+            self._recent.popleft()
+        still_busy = now - self._calm_since < 0.25
+        if (self._level == 1 and still_busy and now - self._busy_since > SLOW_AFTER
+                and len(self._recent) < self.video_fps):
+            self._level = 2
 
     # -- calculator -> host -----------------------------------------------
 
@@ -193,7 +210,8 @@ class Session:
         sideways = viewport.rotation in (90, 270)
         viewport.x_step, viewport.y_step = (1, byte_step) if sideways else (byte_step, 1)
         status = "%s  %s  video:%s" % (self.mapper.status(), self.mode.label, self.video)
-        rgb = self.renderer.render(self._pointer(), status)
+        # A small picture does not need the slow, sharp downscaling filter.
+        rgb = self.renderer.render(self._pointer(), status, fast=self.mode.half)
         return self.mode.pack(rgb, self.dither)
 
     def _pan(self, mapping):
@@ -254,6 +272,7 @@ class Session:
                         self.log("Calculator connected, streaming.")
                     self._streaming = True
                     self.shown = None
+                    self._announce = True
                     credits = FRAME_WINDOW
                     continue
                 if event == _ACK:
@@ -266,45 +285,69 @@ class Session:
                 next_render = time.monotonic() + self.frame_interval
 
                 target = self._target_mode(time.monotonic())
-                if (target.name, target.half) != (self.mode.name, self.mode.half):
+                if (target.name, target.shift) != (self.mode.name, self.mode.shift):
+                    old = self.mode
+                    # Back to full size: the calculator still shows the enlarged
+                    # small picture, so the sharp one can be sent as changes to it.
+                    refine = (self.calc_version >= 6 and old.shift and not target.shift
+                              and old.name == target.name and self.shown is not None)
+                    self.shown = old.enlarged(self.shown) if refine else None
+                    self._shown_mapping = None
                     self.mode = target
-                    self.shown = None
+                    self._announce = True
 
                 frame = self._render()
                 mapping = self.renderer.mapping
                 fresh = self.shown is None
-                if (not fresh and np.array_equal(frame, self.shown)
+                if (not fresh and not self._announce and np.array_equal(frame, self.shown)
                         and time.monotonic() - last_sent < KEEPALIVE):
                     continue
 
-                out = b""
-                if fresh:
-                    # Older calculator programs do not know how to turn the pointer.
-                    turns = self.renderer.viewport.rotation // 90 if self.calc_version >= 5 else 0
-                    out = self.mode.mode_message(turns) + self.mode.palette_message()
                 body = self._encode(frame, mapping)
-                self._watch_activity(len(body), fresh, time.monotonic())
+                now = time.monotonic()
+                if self.video == "auto":
+                    if self.mode.shift:
+                        if fresh or len(body) > CALM_FRACTION * self.mode.fb_size:
+                            self._calm_since = now
+                    elif not self._announce and len(body) > BUSY_FRACTION * self.mode.fb_size:
+                        # Too much changed to send at full size without a long
+                        # wait: show it small right away instead.
+                        self._go_small(now)
+                        next_render = now
+                        continue
+
+                out = b""
+                announced = self._announce
+                if announced:
+                    # Older calculator programs do not know how to turn the pointer,
+                    # or about picture sizes other than half.
+                    turns = self.renderer.viewport.rotation // 90 if self.calc_version >= 5 else 0
+                    scale = self.mode.scale_message() if self.calc_version >= 6 else b""
+                    out = scale + self.mode.mode_message(turns) + self.mode.palette_message()
                 out += body
                 try:
                     with self._write_lock:
                         self._write(out)
-                        self._send_cursor(force=fresh)
+                        self._send_cursor(force=announced)
                 except serial.SerialTimeoutException:
                     # The calculator stopped reading; it will say HELLO again.
                     self._streaming = False
                     continue
                 self.shown = frame
                 self._shown_mapping = mapping
+                self._announce = False
                 credits -= 1
                 last_sent = time.monotonic()
                 self.frames += 1
+                if self.video == "auto" and self.mode.shift:
+                    self._watch_frame_rate(last_sent)
 
                 if self.stats_interval and last_sent >= report_at:
                     span = self.stats_interval + last_sent - report_at
                     self.log("%.1f fps, %.0f KB/s, %s%s"
                              % ((self.frames - report_frames) / span,
                                 (self.bytes_sent - report_bytes) / span / 1024,
-                                self.mode.label, " half-res" if self.mode.half else ""))
+                                self.mode.label, ("", " half-size", " quarter-size")[self.mode.shift]))
                     report_at = last_sent + self.stats_interval
                     report_frames, report_bytes = self.frames, self.bytes_sent
         except (serial.SerialException, OSError) as exc:

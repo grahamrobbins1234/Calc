@@ -9,7 +9,7 @@ import pytest
 
 from tiremote.encoder import (apply_move, cursor_packet, decode_frame, encode_frame, move_op,
                               packetize, packets, unpacketize)
-from tiremote.palette import MODES, half_mode, palette_rgb, quantize
+from tiremote.palette import MODES, half_mode, palette_rgb, quantize, scaled_mode
 from tiremote.protocol import (CURSOR_HIDDEN, MSG_FRAME, MSG_MODE, OP_END, PKT_LZ4,
                                PKT_MAX)
 from tiremote.scroll import find_scroll
@@ -267,9 +267,10 @@ def run_calc(harness, wire):
     out = result.stdout
     bpp, cx, cy = out[0] & 0x1F, out[1] | out[2] << 8, out[3]
     run_calc.half = bool(out[0] & 0x80)
+    run_calc.shift = out[4]
     size = 320 * 240 * bpp // 8
-    lifted = np.frombuffer(out, np.uint8, size, 4)
-    drawn = np.frombuffer(out, np.uint8, size, 4 + size)
+    lifted = np.frombuffer(out, np.uint8, size, 5)
+    drawn = np.frombuffer(out, np.uint8, size, 5 + size)
     return 0, (bpp, cx, cy), lifted, drawn
 
 
@@ -347,25 +348,25 @@ def test_c_pointer_at_screen_edges(harness, name):
 
 
 @pytest.mark.parametrize("name", ["256", "16", "2"])
-def test_c_half_resolution_mode(harness, name):
-    """Video mode: a 160x120 picture shown with every pixel doubled."""
+@pytest.mark.parametrize("shift", [1, 2])
+def test_c_low_resolution_modes(harness, name, shift):
+    """Video mode: a half- or quarter-size picture, enlarged by the calculator."""
     full = MODES[name]
-    half = half_mode(full)
-    assert half.fb_size * 4 == full.fb_size and half.mode_message()[1] == full.bpp | 0x80
+    small = scaled_mode(full, shift)
+    assert small.fb_size * 4 ** shift == full.fb_size
+    assert small.mode_message()[1] == full.bpp | 0x80 and small.scale_message()[1] == shift
     rng = np.random.default_rng(12)
 
-    def doubled(model):
-        return half.unpack(model).repeat(2, axis=0).repeat(2, axis=1)
+    def enter(mode):
+        return mode.scale_message() + mode.mode_message() + mode.palette_message()
 
-    # Full resolution first, then into video mode and through a run of changes.
+    # Full size first, then into video mode and through a run of changes.
     first = rng.integers(0, 256, full.fb_size, dtype=np.uint8)
-    wire = packetize(full.mode_message() + full.palette_message() + encode_frame(first))
+    wire = packetize(enter(full) + encode_frame(first))
     wire += cursor_packet(100, 100)
     model = None
-    for index, frame in enumerate(random_frames(13, 10, half.fb_size)):
-        messages = b""
-        if model is None:
-            messages = half.mode_message() + half.palette_message()
+    for index, frame in enumerate(random_frames(13, 10, small.fb_size)):
+        messages = enter(small) if model is None else b""
         messages += encode_frame(frame, model)
         wire += packetize(messages)
         if index % 2:
@@ -373,22 +374,30 @@ def test_c_half_resolution_mode(harness, name):
         model = frame
         if index in (0, 4, 9):
             status, state, lifted, drawn = run_calc(harness, wire)
-            assert status == 0 and state[0] == full.bpp and run_calc.half
-            assert (full.unpack(lifted) == doubled(model)).all()
+            assert status == 0 and state[0] == full.bpp and run_calc.shift == shift
+            assert (lifted == small.enlarged(model)).all()
             assert full.unpack(drawn)[state[2], state[1]] == 0  # pointer on top, full size
 
     # A small change only redraws its own rows, and the result is still exact.
     frame = model.copy()
-    frame[half.stride * 50 + 3] ^= 0xFF
+    frame[small.stride * 20 + 3] ^= 0xFF
     wire += packetize(encode_frame(frame, model))
     status, _, lifted, _ = run_calc(harness, wire)
-    assert status == 0 and (full.unpack(lifted) == doubled(frame)).all()
+    assert status == 0 and (lifted == small.enlarged(frame)).all()
 
-    # And back to full resolution.
-    last = rng.integers(0, 256, full.fb_size, dtype=np.uint8)
-    wire += packetize(full.mode_message() + full.palette_message() + encode_frame(last))
+    # Back to full size without a full refresh: the sharp picture arrives as
+    # changes to the enlarged one that is already on screen (pointer included).
+    last = small.enlarged(frame).copy()
+    last[::7] ^= 0x55
+    wire += cursor_packet(50, 60)
+    wire += packetize(enter(full) + encode_frame(last, small.enlarged(frame)))
     status, _, lifted, _ = run_calc(harness, wire)
-    assert status == 0 and not run_calc.half and (lifted == last).all()
+    assert status == 0 and run_calc.shift == 0 and (lifted == last).all()
+
+
+def test_c_rejects_unknown_scale(harness):
+    assert run_calc(harness, packetize(b"S\x03"))[0] == 4
+    assert run_calc(harness, packetize(b"S\x00"))[0] == 4
 
 
 def test_half_modes_average_and_roundtrip():

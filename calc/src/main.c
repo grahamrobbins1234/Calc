@@ -42,7 +42,7 @@
 #define FB       ((uint8_t *)gfx_vram)
 #define PKT_WIRE (FB + SCREEN_W * SCREEN_H)
 #define PKT_PLAIN (PKT_WIRE + PKT_MAX)
-#define HALF_FB  (PKT_PLAIN + PKT_MAX) /* the 160x120 picture in half-resolution mode */
+#define LOW_FB   (PKT_PLAIN + PKT_MAX) /* the small picture in the low-resolution modes */
 
 static srl_device_t srl;
 static bool has_srl;
@@ -52,7 +52,8 @@ static uint8_t srl_buf[2048];
 static uint8_t palette_buf[512];
 
 static uint8_t bpp = 8;
-static bool half_res;
+static uint8_t low_shift;      /* 0 = full size; 1 = half, 2 = quarter size pictures */
+static uint8_t low_shift_next = 1; /* what the next MODE_HALF means (MSG_SCALE) */
 static cursor_t cursor;
 static unsigned int cursor_x, cursor_y = CURSOR_HIDDEN;
 
@@ -243,6 +244,8 @@ static void serve(void) {
     uint8_t hello[2] = {MSG_HELLO, PROTO_VERSION};
 
     pk_init(&s, rx_exact, pointer_moved, PKT_WIRE, PKT_PLAIN);
+    low_shift_next = 1;
+    picture = false;
     cursor_y = CURSOR_HIDDEN;
     tx(hello, sizeof hello);
 
@@ -253,14 +256,29 @@ static void serve(void) {
         if (!rd_read(&s, &type, 1)) return;
 
         switch (type) {
+        case MSG_SCALE:
+            if (!rd_read(&s, arg, 1)) return;
+            if (arg[0] != 1 && arg[0] != 2) {
+                rd_error = RD_ERR_MODE;
+                return;
+            }
+            low_shift_next = arg[0];
+            break;
+
         case MSG_MODE:
             if (!rd_read(&s, arg, 1)) return;
+            /*
+             * Same colour depth: the picture on screen stays valid, so lift
+             * the pointer off it properly. The host relies on this to send
+             * the sharp picture as changes to the enlarged one.
+             */
+            if ((arg[0] & MODE_BPP_MASK) == bpp && picture) pointer_hide();
             if (!set_mode(arg[0] & MODE_BPP_MASK)) {
                 rd_error = RD_ERR_MODE;
                 return;
             }
             cursor.turn = (arg[0] & MODE_TURN_MASK) >> MODE_TURN_SHIFT;
-            half_res = (arg[0] & MODE_HALF) != 0;
+            low_shift = (arg[0] & MODE_HALF) ? low_shift_next : 0;
             picture = true;
             break;
 
@@ -272,14 +290,15 @@ static void serve(void) {
             break;
 
         case MSG_FRAME:
-            if (half_res) {
-                /* Decode off-screen, then draw the changed rows doubled. */
-                if (!rd_decode_frame(&s, HALF_FB, SCREEN_W * SCREEN_H / 4 * bpp / 8,
-                                     SCREEN_W / 2 * bpp / 8, NULL))
+            if (low_shift) {
+                /* Decode off-screen, then draw the changed rows enlarged. */
+                unsigned int low_stride = (SCREEN_W >> low_shift) * bpp / 8;
+                if (!rd_decode_frame(&s, LOW_FB, low_stride * (SCREEN_H >> low_shift),
+                                     low_stride, NULL))
                     return;
                 if (rd_dirty_hi > rd_dirty_lo) {
                     pointer_hide();
-                    rd_expand(FB, HALF_FB, bpp, rd_dirty_lo, rd_dirty_hi);
+                    rd_expand(FB, LOW_FB, bpp, low_shift, rd_dirty_lo, rd_dirty_hi);
                 }
             } else {
                 /* The pointer is lifted off the picture only if the frame changes something. */

@@ -20,7 +20,7 @@
 #ifndef PROTO_H
 #define PROTO_H
 
-#define PROTO_VERSION 5
+#define PROTO_VERSION 6
 
 /* Calculator -> host */
 #define MSG_HELLO 0xA1 /* + 1 byte version. "Start over: send mode, palette and a full frame." */
@@ -38,6 +38,11 @@
  * with every pixel doubled. A quarter of the data, for fast-moving pictures.
  */
 #define MODE_HALF 0x80
+/*
+ * MSG_SCALE: + 1 byte, 1 or 2. How small MODE_HALF pictures are from now
+ * on: 1 = half size (160x120), 2 = quarter size (80x60). Starts at 1.
+ */
+#define MSG_SCALE 'S'
 /*
  * The picture is rotated clockwise by this many quarter-turns (the
  * calculator is held turned); the pointer arrow is drawn turned to match.

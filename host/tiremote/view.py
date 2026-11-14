@@ -109,7 +109,7 @@ class Renderer:
         except TypeError:  # Pillow < 10.1
             self._font = ImageFont.load_default()
 
-    def render(self, cursor, status="", draw_cursor=False):
+    def render(self, cursor, status="", draw_cursor=False, fast=False):
         """`cursor` is the pointer position in monitor coordinates.
 
         The calculator draws its own pointer, so it is only painted into the
@@ -118,7 +118,10 @@ class Renderer:
         (x, y, w, h), (out_w, out_h) = self.viewport.layout(cursor)
         shot = self.grabber.grab(x, y, w, h)
         if shot.size != (out_w, out_h):
-            shot = shot.resize((out_w, out_h), self.resample, reducing_gap=2.0)
+            if fast:  # quick and rough: the result is about to be shrunk further
+                shot = shot.resize((out_w, out_h), Image.Resampling.BOX, reducing_gap=1.0)
+            else:
+                shot = shot.resize((out_w, out_h), self.resample, reducing_gap=2.0)
 
         view_w, view_h = self.viewport.lcd_w, self.viewport.lcd_h
         canvas = Image.new("RGB", (view_w, view_h))
