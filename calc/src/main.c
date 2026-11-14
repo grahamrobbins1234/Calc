@@ -49,10 +49,13 @@ static bool has_srl;
 static usb_device_t pending_dev; /* serial device waiting to be opened */
 
 /*
- * Half of this is the USB receive buffer. It is large so data keeps arriving
- * while a packet is being decompressed and drawn.
+ * Keep this small. The serial library asks for the next 64-byte packet from
+ * inside the callback for the previous one, for as long as this buffer has
+ * room, and each of those nests on the calculator's small stack. With a
+ * 16 KB buffer the first large frame crashed the calculator; 2 KB is the
+ * size that has been run on real hardware.
  */
-static uint8_t srl_buf[16384];
+static uint8_t srl_buf[2048];
 static uint8_t palette_buf[512];
 
 static uint8_t bpp = 8;

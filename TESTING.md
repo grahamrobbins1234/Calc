@@ -99,9 +99,9 @@ Run something where the whole picture keeps changing, for 20 seconds or more.
   - starting with `--video-fps 12` (steps down to quarter size sooner) or
     `--video-fps 4` (stays at half size longer)
 
-### F. Link speed: new compression and larger USB buffer
+### F. Link speed: new compression
 
-These two only show up in the numbers. Do the same activity twice, for
+This only shows up in the numbers. Do the same activity twice, for
 example scrolling a web page up and down for 20 seconds while zoomed in:
 
 ```sh
