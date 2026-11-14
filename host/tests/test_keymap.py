@@ -233,3 +233,22 @@ def test_pointer_stays_on_the_shared_monitor():
         mapper._last_tick = None
         assert injector.position() == edge
     assert NullInjector((5, 5)).bounds is None  # no bounds: free movement, as before
+
+
+def test_mac_puts_command_on_the_letterless_key(monkeypatch):
+    import sys
+
+    monkeypatch.setattr(sys, "platform", "darwin")
+    rec = Recorder()
+    mapper = KeyMapper(rec)
+    tap(mapper, "alpha")
+    mapper.update(matrix("vars"))  # Cmd+C while typing letters
+    mapper.update(matrix("vars", "prgm"))
+    mapper.update(matrix())
+    assert rec.events[:2] == [("key", "cmd", True), ("key", "c", True)]
+    tap(mapper, "alpha")
+    rec.events.clear()
+    tap(mapper, "math")
+    assert rec.events == [("key", "ctrl", True), ("key", "ctrl", False)]
+    # A custom layout is left exactly as given.
+    assert KeyMapper(Recorder(), normal={"vars": "key:ctrl"}).normal == {"vars": "key:ctrl"}

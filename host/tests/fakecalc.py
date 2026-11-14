@@ -23,6 +23,7 @@ class FakeCalc:
         self.auto_ack = auto_ack
         self.bpp = None
         self.half = False
+        self.turn = 0
         self.mode_changes = 0
         self.fb = None
         self.palette = None
@@ -113,7 +114,8 @@ class FakeCalc:
                 kind = self._get(1)[0]
                 if kind == MSG_MODE:
                     mode = self._get(1)[0]
-                    self.bpp, self.half = mode & 0x7F, bool(mode & 0x80)
+                    self.bpp, self.half = mode & 0x1F, bool(mode & 0x80)
+                    self.turn = mode >> 5 & 3
                     assert self.bpp in (8, 4, 1)
                     self.mode_changes += 1
                     # Real video memory holds leftovers here, so start from noise.

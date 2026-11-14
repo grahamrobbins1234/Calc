@@ -66,6 +66,8 @@ def parse_args(argv=None):
                         help="half-resolution video mode for games and video: auto = only "
                              "while most of the picture keeps changing (default); "
                              "[2nd]+[del] cycles it")
+    parser.add_argument("--stats", type=float, nargs="?", const=5.0, default=0, metavar="SECONDS",
+                        help="print frame rate and data rate every few seconds (default 5)")
     parser.add_argument("--no-lz4", action="store_true",
                         help="do not LZ4-compress data for the calculator")
     parser.add_argument("--dither", action="store_true",
@@ -188,7 +190,7 @@ def main(argv=None):
             print("Connected: %s." % label)
             session = Session(port, renderer, injector, mapper, origin,
                               fps=args.fps, dither=args.dither, colors=args.colors,
-                              lz4=not args.no_lz4, video=args.video)
+                              lz4=not args.no_lz4, video=args.video, stats=args.stats)
             started = time.monotonic()
             try:
                 error = session.run()

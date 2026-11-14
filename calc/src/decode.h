@@ -80,9 +80,10 @@ bool lz4_decode(const uint8_t *src, unsigned int src_len, uint8_t *dst, unsigned
 
 typedef struct {
     bool shown;
-    unsigned int x, y;
+    uint8_t turn; /* quarter-turns clockwise, to match a rotated picture */
     uint8_t bpp;
-    uint8_t saved[CURSOR_H][CURSOR_W + 1]; /* framebuffer bytes under the pointer */
+    unsigned int top, bottom, first, span; /* the framebuffer rows and bytes it covers */
+    uint8_t saved[CURSOR_H][CURSOR_H + 1]; /* what was under it */
 } cursor_t;
 
 /* Draw the pointer with its tip at (x, y), remembering what was underneath. */

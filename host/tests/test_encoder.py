@@ -265,7 +265,7 @@ def run_calc(harness, wire):
     if result.returncode != 0:
         return result.returncode, None, None, None
     out = result.stdout
-    bpp, cx, cy = out[0] & 0x7F, out[1] | out[2] << 8, out[3]
+    bpp, cx, cy = out[0] & 0x1F, out[1] | out[2] << 8, out[3]
     run_calc.half = bool(out[0] & 0x80)
     size = 320 * 240 * bpp // 8
     lifted = np.frombuffer(out, np.uint8, size, 4)
@@ -403,6 +403,37 @@ def test_half_modes_average_and_roundtrip():
         assert shown.shape == (240, 320, 3)
         assert shown[0, 0].tolist() == shown[1, 1].tolist() == [255, 255, 255]
         assert shown[10, 10].max() < 128 and shown[100, 100].tolist() == [0, 0, 0]
+
+
+@pytest.mark.parametrize("name", ["256", "16", "2"])
+@pytest.mark.parametrize("turns", [0, 1, 2, 3])
+def test_c_pointer_turns_with_the_picture(harness, name, turns):
+    mode = MODES[name]
+    # Two plain backgrounds, so both the dark outline and the bright fill show up on one of them.
+    backgrounds = [np.full(mode.fb_size, value, np.uint8) for value in (0x00, 0xFF)]
+    # The arrow is 8 wide and 12 long, and reaches away from its tip like this:
+    reach = {0: (0, 7, 0, 11), 1: (-11, 0, 0, 7), 2: (-7, 0, -11, 0), 3: (0, 11, -7, 0)}[turns]
+    for spot in ((160, 120), (0, 0), (319, 239), (5, 3), (316, 236), (0, 239), (319, 0)):
+        changed = []
+        for frame in backgrounds:
+            setup = packetize(mode.mode_message(turns) + mode.palette_message()
+                              + encode_frame(frame))
+            status, state, lifted, drawn = run_calc(
+                harness, setup + cursor_packet(40, 40) + cursor_packet(*spot))
+            assert status == 0 and state == (mode.bpp, *spot)
+            assert (lifted == frame).all(), "the pointer must lift off cleanly"
+            changed.append(np.argwhere(mode.unpack(drawn) != mode.unpack(lifted)))
+        changed = np.concatenate(changed)
+        x, y = spot
+        assert len(changed) > 0
+        assert changed[:, 1].min() >= max(0, x + reach[0])
+        assert changed[:, 1].max() <= min(319, x + reach[1])
+        assert changed[:, 0].min() >= max(0, y + reach[2])
+        assert changed[:, 0].max() <= min(239, y + reach[3])
+        if spot == (160, 120):  # nothing clipped: the whole arrow, the right way round
+            assert changed[:, 1].min() == x + reach[0] and changed[:, 1].max() == x + reach[1]
+            assert changed[:, 0].min() == y + reach[2] and changed[:, 0].max() == y + reach[3]
+            assert len(changed) == 56  # every pixel of the arrow, once
 
 
 def test_c_decoder_rejects_bad_input(harness):

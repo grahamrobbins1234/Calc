@@ -255,10 +255,11 @@ static void serve(void) {
         switch (type) {
         case MSG_MODE:
             if (!rd_read(&s, arg, 1)) return;
-            if (!set_mode(arg[0] & (uint8_t)~MODE_HALF)) {
+            if (!set_mode(arg[0] & MODE_BPP_MASK)) {
                 rd_error = RD_ERR_MODE;
                 return;
             }
+            cursor.turn = (arg[0] & MODE_TURN_MASK) >> MODE_TURN_SHIFT;
             half_res = (arg[0] & MODE_HALF) != 0;
             picture = true;
             break;

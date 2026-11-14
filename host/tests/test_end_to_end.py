@@ -146,20 +146,28 @@ def test_frame_window_and_version_check(stack):
     logged = []
     session.log = logged.append
 
-    calc.hello(version=1)  # an old calculator program
+    calc.hello(version=4)  # the previous calculator program still works
+    assert wait_for(lambda: calc.frames >= 1 and session.calc_version == 4)
+    frames = calc.frames
+
+    calc.hello(version=1)  # a really old one does not
     time.sleep(0.5)
-    assert calc.frames == 0 and any("version" in line for line in logged)
+    assert calc.frames <= frames + 3 and any("version" in line for line in logged)
 
     # Without acknowledgements the host stops after the window of two frames.
     calc.auto_ack = False
+    time.sleep(0.3)  # let acknowledgements already on their way arrive
     calc.hello()
-    assert wait_for(lambda: calc.frames == 2)
+    time.sleep(0.2)
+    base = calc.frames  # the fresh window is two frames from here on
+    calc.hello()
+    assert wait_for(lambda: calc.frames == base + 2)
     time.sleep(1.2)
-    assert calc.frames == 2
+    assert calc.frames == base + 2
     calc.ack()
-    assert wait_for(lambda: calc.frames == 3)
+    assert wait_for(lambda: calc.frames == base + 3)
     time.sleep(0.7)
-    assert calc.frames == 3
+    assert calc.frames == base + 3
     assert in_sync(calc, session)
 
 

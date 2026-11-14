@@ -56,7 +56,8 @@ static bool serve(rd_stream_t *s) {
         case MSG_MODE:
             if (!rd_read(s, arg, 1)) return false;
             half_res = (arg[0] & MODE_HALF) != 0;
-            arg[0] &= (uint8_t)~MODE_HALF;
+            cursor.turn = (arg[0] & MODE_TURN_MASK) >> MODE_TURN_SHIFT;
+            arg[0] &= MODE_BPP_MASK;
             if (arg[0] != 8 && arg[0] != 4 && arg[0] != 1) return false;
             cursor.shown = false;
             bpp = arg[0];
@@ -101,7 +102,7 @@ int main(void) {
     }
 
     size = SCREEN_W * SCREEN_H * bpp / 8;
-    head[0] = (uint8_t)(bpp | (half_res ? MODE_HALF : 0));
+    head[0] = (uint8_t)(bpp | (half_res ? MODE_HALF : 0) | (cursor.turn << MODE_TURN_SHIFT));
     head[1] = (uint8_t)cursor_x;
     head[2] = (uint8_t)(cursor_x >> 8);
     head[3] = (uint8_t)cursor_y;

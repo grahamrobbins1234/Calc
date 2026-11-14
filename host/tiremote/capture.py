@@ -6,6 +6,26 @@ import sys
 from PIL import Image
 
 
+def _mac_screen_size(sct, monitor):
+    """The size the Mac's window system uses for a display (which follows
+    rotation even when CoreGraphics' own numbers do not), or None."""
+    try:
+        from AppKit import NSScreen
+
+        count = ctypes.c_uint32(0)
+        displays = (ctypes.c_uint32 * 32)()
+        sct.core.CGGetActiveDisplayList(32, displays, ctypes.byref(count))
+        if not 1 <= monitor <= count.value:
+            return None
+        for screen in NSScreen.screens():
+            if int(screen.deviceDescription()["NSScreenNumber"]) == displays[monitor - 1]:
+                frame = screen.frame()
+                return int(frame.size.width), int(frame.size.height)
+    except Exception:
+        pass
+    return None
+
+
 def _mac_report(sct):
     """Everything macOS says about display sizes, for troubleshooting."""
     lines = []
@@ -55,6 +75,12 @@ class MssGrabber:
         elif monitor and not self._fits(self.width, self.height) \
                 and self._fits(self.height, self.width):
             # A rotated display reported with its sides swapped (seen on macOS).
+            self.width, self.height = self.height, self.width
+            self.note = "rotated display detected"
+        elif monitor and sys.platform == "darwin" \
+                and _mac_screen_size(self._sct, monitor) == (self.height, self.width) \
+                and self.width != self.height:
+            # The window system lays the desktop out the other way round.
             self.width, self.height = self.height, self.width
             self.note = "rotated display detected"
 

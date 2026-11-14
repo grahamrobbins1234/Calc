@@ -20,7 +20,7 @@
 #ifndef PROTO_H
 #define PROTO_H
 
-#define PROTO_VERSION 4
+#define PROTO_VERSION 5
 
 /* Calculator -> host */
 #define MSG_HELLO 0xA1 /* + 1 byte version. "Start over: send mode, palette and a full frame." */
@@ -38,6 +38,13 @@
  * with every pixel doubled. A quarter of the data, for fast-moving pictures.
  */
 #define MODE_HALF 0x80
+/*
+ * The picture is rotated clockwise by this many quarter-turns (the
+ * calculator is held turned); the pointer arrow is drawn turned to match.
+ */
+#define MODE_TURN_SHIFT 5
+#define MODE_TURN_MASK 0x60
+#define MODE_BPP_MASK 0x1F
 #define MSG_PALETTE 'P' /* + 1 byte count (0 = 256) + count little-endian 1555 colours */
 #define MSG_FRAME   'F' /* + frame ops, terminated by OP_END */
 

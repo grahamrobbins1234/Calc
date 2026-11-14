@@ -25,10 +25,11 @@ There are two ways to connect, using the same calculator program:
 - **Wi-Fi**, through an ESP32-S3 plugged into the calculator's USB port — see
   [`bridge/`](bridge/README.md).
 
-> **Status:** the host is covered by automated tests (including an end-to-end
-> run against a simulated calculator), and the calculator's frame decoder is
-> tested natively against the host's encoder. The calculator program has not
-> been run on physical hardware yet — please report what you see.
+> **Status:** the USB cable setup has been run on a real TI-84 Plus CE
+> Python Edition with a Mac as the host. The Wi-Fi bridge compiles and its
+> protocol code is tested, but it has not been run on hardware. Everything is
+> covered by automated tests, including the calculator's decoding code
+> compiled natively and checked against the host.
 
 ## 1. Put the program on the calculator
 
@@ -76,6 +77,7 @@ a different order, or unplug and replug, both sides reconnect on their own.
 | `--colors N` | starting colour mode: `256` (default), `16c` (16 colours), `16` (16 greys) or `2` (black and white) |
 | `--video MODE` | half-resolution video mode: `auto` (default), `on` or `off` |
 | `--dither` | dithered colours: smoother gradients, more data per frame |
+| `--stats [SECONDS]` | print frame rate and data rate every few seconds while running |
 | `--no-lz4` | do not LZ4-compress the stream (if the calculator turns out faster without) |
 | `--filter NAME` | downscaling filter: `lanczos` (default), `bilinear`, `box`, `nearest` |
 | `--listen [PORT]` | network mode: wait for the [Wi-Fi bridge](bridge/README.md) instead of a cable (needs `--key` or `TIREMOTE_KEY`) |
@@ -128,9 +130,9 @@ at the cost of some of the saving.
 | `[mode]` | Switch the arrows between mouse movement and the arrow keys |
 | `[alpha]` | Toggle the letter layer (the green letters above the keys) |
 | `[2nd]` | Shift (hold) |
-| `[vars]` / `[stat]` | Ctrl / Alt (hold) |
+| `[vars]` / `[stat]` | Ctrl / Alt (hold). On a Mac `[vars]` is Command instead |
 | `[enter]` `[del]` `[clear]` `[X,T,θ,n]` | Enter, Backspace, Escape, Tab |
-| `[math]` `[apps]` `[prgm]` | Windows/Command key, Space, Delete (number layer) |
+| `[math]` `[apps]` `[prgm]` | Windows key (Control on a Mac), Space, Delete (number layer) |
 | `0`–`9` `.` `,` `(` `)` `+` `-` `×` `÷` `^` | Themselves |
 | `[x⁻¹]` `[sin]` `[cos]` `[tan]` `[x²]` `[log]` `[ln]` `[(-)]` | `'` `[` `]` `=` `;` `\` `` ` `` `_` |
 | **`[2nd]`+`[mode]`** | **Quit** the calculator program |
@@ -139,8 +141,9 @@ With the letter layer on, the keys type their green letter (`[math]` = a,
 `[apps]` = b, `[prgm]` = c, …, `0` = space) and every key without a letter
 keeps its job. `[2nd]` shifts whatever is typed (`a` → `A`, `1` → `!`,
 `;` → `:` and so on, US layout), which covers the whole keyboard. Shortcuts
-work by holding the modifier: Ctrl+C is hold `[vars]` and tap `[prgm]` in the
-letter layer; Alt+Tab is hold `[stat]` and tap `[X,T,θ,n]`.
+work by holding the modifier: Ctrl+C (Command+C on a Mac) is hold `[vars]`
+and tap `[prgm]` in the letter layer; Alt+Tab is hold `[stat]` and tap
+`[X,T,θ,n]`.
 
 To change any of this, edit the two dictionaries at the top of
 `host/tiremote/keymap.py`; the calculator program does not need rebuilding.
@@ -214,8 +217,9 @@ with sanitizers on, and check it against the Python side.
   byte is taken from the LCD controller's documentation and has not been
   seen on a real screen. If those modes look scrambled in vertical stripes,
   that is the cause; please report it.
-- The calculator program and the host must be the same protocol version; the
-  host says so if they are not.
+- The host works with the current calculator program and the one before it,
+  and says so if the calculator's is too old. With the older one, the
+  pointer arrow is not turned when the picture is rotated.
 - If the calculator ever rejects what the host sent, it briefly shows its
   waiting screen with a "Last link error code". That number says what was
   wrong (the list is in `calc/src/decode.h`) and is worth including in a bug

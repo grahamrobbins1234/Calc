@@ -1,6 +1,7 @@
 """Wire protocol constants. Mirrors calc/src/proto.h."""
 
-PROTO_VERSION = 4
+PROTO_VERSION = 5
+COMPATIBLE_VERSIONS = (4, 5)  # calculator programs this host can talk to
 
 # Calculator -> host
 MSG_HELLO = 0xA1  # + 1 byte version
@@ -13,6 +14,8 @@ FRAME_WINDOW = 2  # frames the host may have sent but not yet acknowledged
 # Host -> calculator (carried in packets, see encoder.packetize)
 MSG_MODE = ord("M")  # + 1 byte: bits per pixel, plus MODE_HALF
 MODE_HALF = 0x80  # frames are 160x120, shown with every pixel doubled
+MODE_TURN_SHIFT = 5  # bits 5-6: quarter-turns clockwise, so the pointer is drawn turned (v5+)
+MODE_BPP_MASK = 0x1F
 MSG_PALETTE = ord("P")  # + 1 byte count (0 = 256) + count * 2 bytes
 MSG_FRAME = ord("F")  # + ops, OP_END terminated
 

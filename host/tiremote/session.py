@@ -18,7 +18,7 @@ from .encoder import (apply_move, cursor_packet, encode_frame, move_is_valid, mo
                       packets)
 from .palette import MODE_ORDER, MODES, half_mode
 from .protocol import (CURSOR_HIDDEN, FRAME_WINDOW, KEY_GROUPS, MSG_ACK, MSG_BYE,
-                       MSG_HELLO, MSG_KEYS, PROTO_VERSION)
+                       MSG_HELLO, MSG_KEYS, COMPATIBLE_VERSIONS, PROTO_VERSION)
 from .scroll import find_scroll, pan_move
 
 KEEPALIVE = 0.5  # send something at least this often so the calculator knows we are here
@@ -37,7 +37,8 @@ _HELLO, _ACK = "hello", "ack"
 
 class Session:
     def __init__(self, port, renderer, injector, mapper, origin=(0, 0),
-                 fps=20, dither=False, colors="256", lz4=True, video="auto", log=print):
+                 fps=20, dither=False, colors="256", lz4=True, video="auto", stats=0,
+                 log=print):
         self.port = port  # an open serial.Serial (or anything with read/write)
         self.renderer = renderer
         self.injector = injector
@@ -48,6 +49,7 @@ class Session:
         self.lz4 = lz4
         self.log = log
         self.video = video
+        self.stats_interval = stats  # seconds between throughput reports; 0 = none
         self.mode = MODES[colors]  # the format currently on the wire (may be a half-res one)
         self.shown = None  # the calculator's framebuffer as we believe it to be
         self._shown_mapping = None  # which part of the desktop that picture shows
@@ -64,6 +66,7 @@ class Session:
         self._stop = threading.Event()
         self._error = None
         self._warned_version = False
+        self.calc_version = PROTO_VERSION
         mapper.on_colors = self.cycle_colors
         mapper.on_video = self.cycle_video
 
@@ -116,7 +119,8 @@ class Session:
                 kind = head[0]
                 if kind == MSG_HELLO:
                     version = self._read_exact(1)
-                    if version == bytes([PROTO_VERSION]):
+                    if version and version[0] in COMPATIBLE_VERSIONS:
+                        self.calc_version = version[0]
                         self._events.put(_HELLO)
                     elif version and not self._warned_version:
                         self._warned_version = True
@@ -151,6 +155,8 @@ class Session:
                 except (serial.SerialException, OSError) as exc:
                     self._error = exc
                     self._stop.set()
+                except Exception as exc:  # e.g. the pointer position could not be read
+                    self.log("Pointer update failed: %s" % exc)
                 finally:
                     self._write_lock.release()
 
@@ -230,6 +236,8 @@ class Session:
         credits = 0
         last_sent = 0.0
         next_render = 0.0
+        report_at = time.monotonic() + self.stats_interval
+        report_frames, report_bytes = 0, 0
         try:
             while not self._stop.is_set():
                 # Wait for the calculator, or for the next frame slot.
@@ -271,7 +279,9 @@ class Session:
 
                 out = b""
                 if fresh:
-                    out = self.mode.mode_message() + self.mode.palette_message()
+                    # Older calculator programs do not know how to turn the pointer.
+                    turns = self.renderer.viewport.rotation // 90 if self.calc_version >= 5 else 0
+                    out = self.mode.mode_message(turns) + self.mode.palette_message()
                 body = self._encode(frame, mapping)
                 self._watch_activity(len(body), fresh, time.monotonic())
                 out += body
@@ -288,6 +298,15 @@ class Session:
                 credits -= 1
                 last_sent = time.monotonic()
                 self.frames += 1
+
+                if self.stats_interval and last_sent >= report_at:
+                    span = self.stats_interval + last_sent - report_at
+                    self.log("%.1f fps, %.0f KB/s, %s%s"
+                             % ((self.frames - report_frames) / span,
+                                (self.bytes_sent - report_bytes) / span / 1024,
+                                self.mode.label, " half-res" if self.mode.half else ""))
+                    report_at = last_sent + self.stats_interval
+                    report_frames, report_bytes = self.frames, self.bytes_sent
         except (serial.SerialException, OSError) as exc:
             self._error = exc
         finally:

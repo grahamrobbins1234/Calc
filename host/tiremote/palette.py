@@ -7,7 +7,7 @@ because desktops are mostly grey and the cube alone has almost none.
 
 import numpy as np
 
-from .protocol import LCD_H, LCD_W, MODE_HALF, MSG_MODE, MSG_PALETTE
+from .protocol import LCD_H, LCD_W, MODE_HALF, MODE_TURN_SHIFT, MSG_MODE, MSG_PALETTE
 
 R_LEVELS, G_LEVELS, B_LEVELS = 6, 8, 5
 CUBE_SIZE = R_LEVELS * G_LEVELS * B_LEVELS  # 240
@@ -113,8 +113,10 @@ class ColorMode:
     def fb_size(self):
         return self.stride * self.height
 
-    def mode_message(self):
-        return bytes([MSG_MODE, self.bpp | (MODE_HALF if self.half else 0)])
+    def mode_message(self, turns=0):
+        """`turns`: quarter-turns clockwise the picture is rotated by."""
+        return bytes([MSG_MODE, self.bpp | (MODE_HALF if self.half else 0)
+                      | (turns & 3) << MODE_TURN_SHIFT])
 
     def palette_message(self):
         colours = self.palette_rgb().astype(np.uint16)

@@ -16,6 +16,7 @@ Action strings:
   "video"              cycle half-resolution video mode: auto -> on -> off
 """
 
+import sys
 import threading
 import time
 
@@ -56,6 +57,14 @@ NORMAL_LAYER = {
     "+": "+", "-": "-", "*": "*", "/": "/", "^": "^",
     "x^-1": "'", "sin": "[", "cos": "]", "tan": "=",
     "x^2": ";", "log": "\\", "ln": "`",
+}
+
+# On a Mac the everyday shortcut key is Command, so it takes the easy-to-hold
+# [vars] key (which has no letter, so it works while typing letters) and
+# Control moves to [math].
+MAC_OVERRIDES = {
+    "vars": "key:cmd",
+    "math": "key:ctrl",
 }
 
 # The green letters printed above the keys. Keys not listed fall through to
@@ -116,6 +125,8 @@ class KeyMapper:
         self.on_colors = lambda: None
         self.on_video = lambda: None
         self.normal = dict(NORMAL_LAYER if normal is None else normal)
+        if normal is None and sys.platform == "darwin":
+            self.normal.update(MAC_OVERRIDES)
         self.alpha_layer = dict(ALPHA_LAYER if alpha is None else alpha)
         self.alpha = False
         self.arrows_are_keys = False

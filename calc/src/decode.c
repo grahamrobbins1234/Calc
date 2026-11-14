@@ -313,38 +313,69 @@ static const uint8_t cursor_art[CURSOR_H][CURSOR_W] = {
     {0, 0, 0, 0, 1, 1, 0, 0},
 };
 
-/* Which framebuffer bytes of one row the pointer covers. */
-static unsigned int cursor_span(const cursor_t *c, unsigned int *first) {
-    unsigned int stride = SCREEN_W * c->bpp / 8;
-    unsigned int start = c->x * c->bpp / 8;
-    unsigned int end = ((c->x + CURSOR_W) * c->bpp + 7) / 8;
-    if (end > stride) end = stride;
-    *first = start;
-    return end - start;
-}
-
 void cursor_show(cursor_t *c, uint8_t *fb, uint8_t bpp, unsigned int x, unsigned int y) {
     unsigned int stride = SCREEN_W * bpp / 8;
-    unsigned int first, span, row, col;
     uint8_t mask = (uint8_t)((1u << bpp) - 1); /* also the brightest colour index */
+    /* The box the turned arrow occupies: how far it reaches each way from its tip. */
+    bool sideways = (c->turn & 1) != 0;
+    unsigned int wide = sideways ? CURSOR_H : CURSOR_W;
+    unsigned int tall = sideways ? CURSOR_W : CURSOR_H;
+    unsigned int back_x = (c->turn == 1 || c->turn == 2) ? wide - 1 : 0;
+    unsigned int back_y = (c->turn == 2 || c->turn == 3) ? tall - 1 : 0;
+    unsigned int left, right, row, col;
 
     if (c->shown) cursor_hide(c, fb);
     if (x >= SCREEN_W || y >= SCREEN_H) return;
-    c->x = x;
-    c->y = y;
+
+    left = x > back_x ? x - back_x : 0;
+    right = x - back_x + wide; /* x - back_x may wrap; only used when it did not */
+    if (x < back_x) right = x + wide - back_x;
+    if (right > SCREEN_W) right = SCREEN_W;
+    c->top = y > back_y ? y - back_y : 0;
+    c->bottom = y + tall - back_y;
+    if (c->bottom > SCREEN_H) c->bottom = SCREEN_H;
+    c->first = left * bpp / 8;
+    c->span = (right * bpp + 7) / 8 - c->first;
     c->bpp = bpp;
     c->shown = true;
-    span = cursor_span(c, &first);
 
-    for (row = 0; row < CURSOR_H && y + row < SCREEN_H; row++) {
-        uint8_t *line = fb + (y + row) * stride;
-        memcpy(c->saved[row], line + first, span);
-        for (col = 0; col < CURSOR_W && x + col < SCREEN_W; col++) {
+    for (row = c->top; row < c->bottom; row++)
+        memcpy(c->saved[row - c->top], fb + row * stride + c->first, c->span);
+
+    for (row = 0; row < CURSOR_H; row++) {
+        for (col = 0; col < CURSOR_W; col++) {
             uint8_t art = cursor_art[row][col];
-            unsigned int bit = (x + col) * bpp; /* leftmost pixel in the lowest bits */
-            uint8_t shift = bit & 7;
-            uint8_t *p = line + bit / 8;
+            unsigned int px, py, bit;
+            uint8_t shift, *p;
+
             if (!art) continue;
+            /* Turn the arrow clockwise about its tip, a quarter-turn per step. */
+            switch (c->turn) {
+            default:
+                px = x + col;
+                py = y + row;
+                break;
+            case 1:
+                if (x < row) continue;
+                px = x - row;
+                py = y + col;
+                break;
+            case 2:
+                if (x < col || y < row) continue;
+                px = x - col;
+                py = y - row;
+                break;
+            case 3:
+                if (y < col) continue;
+                px = x + row;
+                py = y - col;
+                break;
+            }
+            if (px >= SCREEN_W || py >= SCREEN_H) continue;
+
+            bit = px * bpp; /* leftmost pixel in the lowest bits */
+            shift = bit & 7;
+            p = fb + py * stride + bit / 8;
             *p = (uint8_t)((*p & ~(mask << shift)) | ((art == 2 ? mask : 0) << shift));
         }
     }
@@ -352,11 +383,10 @@ void cursor_show(cursor_t *c, uint8_t *fb, uint8_t bpp, unsigned int x, unsigned
 
 void cursor_hide(cursor_t *c, uint8_t *fb) {
     unsigned int stride = SCREEN_W * c->bpp / 8;
-    unsigned int first, span, row;
+    unsigned int row;
 
     if (!c->shown) return;
     c->shown = false;
-    span = cursor_span(c, &first);
-    for (row = 0; row < CURSOR_H && c->y + row < SCREEN_H; row++)
-        memcpy(fb + (c->y + row) * stride + first, c->saved[row], span);
+    for (row = c->top; row < c->bottom; row++)
+        memcpy(fb + row * stride + c->first, c->saved[row - c->top], c->span);
 }

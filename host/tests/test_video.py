@@ -35,6 +35,9 @@ class GameScreen:
         return image.crop((x, y, x + w, y + h))
 
 
+LOG = []
+
+
 def wait_for(predicate, timeout=5.0):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -51,7 +54,7 @@ def start(video):
     injector = NullInjector((320, 240))
     mapper = KeyMapper(injector, on_zoom=viewport.zoom)
     session = Session(net.NetPort(host_end), Renderer(screen, viewport, "nearest"), injector,
-                      mapper, fps=60, video=video, log=lambda *_: None)
+                      mapper, fps=60, video=video, stats=0.3, log=LOG.append)
     thread = threading.Thread(target=session.run, daemon=True)
     thread.start()
     calc = FakeCalc(calc_end.fileno())
@@ -95,6 +98,8 @@ def test_auto_video_mode_follows_activity():
         changes = calc.mode_changes
         time.sleep(1.0)
         assert calc.mode_changes == changes, "a still picture must not flip modes"
+        reports = [line for line in LOG if "fps" in line]
+        assert any("half-res" in line for line in reports) and any("KB/s" in line for line in reports)
         assert calc.error is None
     finally:
         finish()
