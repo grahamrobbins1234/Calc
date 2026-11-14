@@ -216,3 +216,20 @@ def test_rotated_picture_and_pointer_agree():
         ax, ay = renderer.to_lcd((100, 100))
         bx, by = renderer.to_lcd((100 + 2 * view.scale, 100))
         assert (bx - ax, by - ay) == tuple(2 * v for v in renderer.turn_vector(1, 0))
+
+
+def test_pointer_stays_on_the_shared_monitor():
+    from tiremote.inject import NullInjector
+
+    injector = NullInjector((100, 100), bounds=(0, 0, 956, 1470))
+    mapper = KeyMapper(injector)
+    mapper.scale = 4.0
+    for key, edge in (("left", (0, 100)), ("up", (0, 0)), ("right", (955, 0)),
+                      ("down", (955, 1469))):
+        mapper.update(matrix(key), now=0.0)
+        for step in range(1, 1200):
+            mapper.tick(now=step / 60)
+        mapper.update(matrix(), now=30.0)
+        mapper._last_tick = None
+        assert injector.position() == edge
+    assert NullInjector((5, 5)).bounds is None  # no bounds: free movement, as before

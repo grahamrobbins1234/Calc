@@ -84,13 +84,15 @@ def make_injector(args, grabber):
     from .inject import NullInjector, PynputInjector
 
     centre = (grabber.left + grabber.width // 2, grabber.top + grabber.height // 2)
+    bounds = (grabber.left, grabber.top,
+              grabber.left + grabber.width, grabber.top + grabber.height)
     if args.view_only:
-        return NullInjector(centre)
+        return NullInjector(centre, bounds)
     try:
-        return PynputInjector()
+        return PynputInjector(bounds)
     except Exception as exc:
         print("Cannot control mouse/keyboard (%s); running view-only." % exc, file=sys.stderr)
-        return NullInjector(centre)
+        return NullInjector(centre, bounds)
 
 
 def main(argv=None):

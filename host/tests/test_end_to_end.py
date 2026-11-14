@@ -34,7 +34,8 @@ def stack():
     port = serial.Serial(os.ttyname(slave), 115200, timeout=0.2, write_timeout=2.0)
     grabber = MssGrabber(1)
     viewport = Viewport(grabber.width, grabber.height)
-    injector = PynputInjector()
+    injector = PynputInjector((grabber.left, grabber.top, grabber.left + grabber.width,
+                               grabber.top + grabber.height))
     mapper = KeyMapper(injector, on_zoom=viewport.zoom)
     session = Session(port, Renderer(grabber, viewport), injector, mapper,
                       (grabber.left, grabber.top), fps=60, log=lambda *_: None)
@@ -100,6 +101,15 @@ def test_stream_and_input(stack):
     assert calc.cursor[0] > start_x
     assert calc.wire_bytes - before < 1500
     assert in_sync(calc, session)
+
+    # Holding an arrow cannot push the pointer off the shared monitor.
+    injector._mouse.position = (1270, 300)
+    calc.keys("right")
+    time.sleep(0.8)
+    calc.keys()
+    time.sleep(0.1)
+    assert injector.position() == (1279, 300)
+    assert wait_for(lambda: calc.cursor is not None and calc.cursor[1] != CURSOR_HIDDEN)
 
     # Zoom key switches to a closer view; the calculator's copy stays exact.
     frames = calc.frames
