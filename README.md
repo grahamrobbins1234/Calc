@@ -31,6 +31,9 @@ There are two ways to connect, using the same calculator program:
 > covered by automated tests, including the calculator's decoding code
 > compiled natively and checked against the host.
 
+Trying a new build? [TESTING.md](TESTING.md) lists what changed recently and
+what to check.
+
 ## 1. Put the program on the calculator
 
 1. Get `REMOTE.8xp`: download the **REMOTE** artifact from the latest run of
