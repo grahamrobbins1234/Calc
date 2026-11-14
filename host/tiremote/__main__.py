@@ -58,9 +58,10 @@ def parse_args(argv=None):
                         help="turn the picture clockwise by this many degrees, for holding "
                              "the calculator sideways; the arrow keys turn with it")
     parser.add_argument("--fps", type=float, default=20, help="maximum frames per second")
-    parser.add_argument("--colors", choices=["256", "16", "2"], default="256",
-                        help="starting colour mode: 256 colours, 16 greys (half the data) or "
-                             "2 = black and white (an eighth); [2nd]+[clear] cycles it")
+    parser.add_argument("--colors", choices=["256", "16c", "16", "2"], default="256",
+                        help="starting colour mode: 256 colours, 16c = 16 colours or 16 = 16 "
+                             "greys (both half the data), 2 = black and white (an eighth); "
+                             "[2nd]+[clear] cycles it")
     parser.add_argument("--video", choices=["auto", "on", "off"], default="auto",
                         help="half-resolution video mode for games and video: auto = only "
                              "while most of the picture keeps changing (default); "
@@ -127,7 +128,7 @@ def main(argv=None):
         px, py = injector.position()
         mode = MODES[args.colors]
         rgb = renderer.render((px - origin[0], py - origin[1]),
-                              "%s  %sc" % (mapper.status(), mode.name), draw_cursor=True)
+                              "%s  %s" % (mapper.status(), mode.label), draw_cursor=True)
         Image.fromarray(mode.to_rgb(mode.pack(rgb, args.dither))).save(args.snapshot)
         print("Saved %s" % args.snapshot)
         return 0

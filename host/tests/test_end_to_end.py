@@ -108,12 +108,13 @@ def test_stream_and_input(stack):
     assert wait_for(lambda: viewport.level == 1)
     assert wait_for(lambda: calc.frames > frames + 1 and in_sync(calc, session))
 
-    # [2nd]+[clear] cycles the colour mode: 16 greys, then black and white.
-    for bpp in (4, 1):
+    # [2nd]+[clear] cycles the colour mode: 16 colours, 16 greys, then black and white.
+    for bpp, label in ((4, "16c"), (4, "16g"), (1, "bw")):
         calc.keys("2nd")
         calc.keys("2nd", "clear")
         calc.keys()
-        assert wait_for(lambda: calc.bpp == bpp and in_sync(calc, session))
+        assert wait_for(lambda: session.mode.label == label and calc.bpp == bpp
+                        and in_sync(calc, session))
         assert calc.fb.size == 320 * 240 * bpp // 8
 
     # A resync request gets mode, palette and a complete frame again.

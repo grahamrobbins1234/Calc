@@ -186,7 +186,7 @@ class Session:
         byte_step = max(1, 8 // self.mode.bpp)  # pans along framebuffer rows go in whole bytes
         sideways = viewport.rotation in (90, 270)
         viewport.x_step, viewport.y_step = (1, byte_step) if sideways else (byte_step, 1)
-        status = "%s  %sc  video:%s" % (self.mapper.status(), self.mode.name, self.video)
+        status = "%s  %s  video:%s" % (self.mapper.status(), self.mode.label, self.video)
         rgb = self.renderer.render(self._pointer(), status)
         return self.mode.pack(rgb, self.dither)
 

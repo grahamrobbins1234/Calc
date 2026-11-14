@@ -100,6 +100,7 @@ class ColorMode:
     """
 
     name = ""
+    label = ""  # short form for the status line
     bpp = 8
     width, height = LCD_W, LCD_H  # size of the picture the frames describe
     half = False
@@ -126,7 +127,7 @@ class ColorMode:
 
 
 class Colour256(ColorMode):
-    name, bpp = "256", 8
+    name, label, bpp = "256", "256c", 8
 
     def palette_rgb(self):
         return palette_rgb()
@@ -141,7 +142,7 @@ class Colour256(ColorMode):
 class Grey16(ColorMode):
     """16 greys at 4 bits per pixel: half the data, still good for text."""
 
-    name, bpp = "16", 4
+    name, label, bpp = "16", "16g", 4
 
     def palette_rgb(self):
         return np.repeat((np.arange(16, dtype=np.uint8) * 17)[:, None], 3, axis=1)
@@ -161,10 +162,53 @@ class Grey16(ColorMode):
         return out
 
 
+class Colour16(Grey16):
+    """16 colours at 4 bits per pixel: half the data of 256 colours, and
+    still in colour. Coarse, so gradients band unless dithering is on."""
+
+    name, label = "16c", "16c"
+
+    # Black first and white last: the calculator draws its pointer with them.
+    _PALETTE = np.array([
+        (0, 0, 0), (128, 0, 0), (0, 128, 0), (128, 128, 0),
+        (0, 0, 128), (128, 0, 128), (0, 128, 128), (192, 192, 192),
+        (128, 128, 128), (255, 0, 0), (0, 255, 0), (255, 255, 0),
+        (0, 0, 255), (255, 0, 255), (0, 255, 255), (255, 255, 255)], dtype=np.uint8)
+    _lut = None
+
+    def palette_rgb(self):
+        return self._PALETTE
+
+    @classmethod
+    def _nearest(cls):
+        """Nearest palette entry for every colour, at 5 bits per channel."""
+        if cls._lut is None:
+            steps = (np.arange(32) * 255 // 31).astype(np.int32)
+            grid = np.stack(np.meshgrid(steps, steps, steps, indexing="ij"), axis=-1)
+            diff = grid[:, :, :, None, :] - cls._PALETTE.astype(np.int32)[None, None, None]
+            # Weighted so brightness errors count more than hue errors.
+            dist = (diff ** 2 * np.array([3, 6, 2])).sum(axis=-1)
+            cls._lut = dist.argmin(axis=-1).astype(np.uint8)
+        return cls._lut
+
+    def pack(self, rgb, dither=False):
+        lut = self._nearest()
+        q = rgb >> 3
+        level = lut[q[:, :, 0], q[:, :, 1], q[:, :, 2]]
+        if dither:
+            # Only where the palette is a poor match, so flat areas that are
+            # already (nearly) a palette colour, like white pages, stay clean.
+            error = np.abs(rgb.astype(np.int16) - self._PALETTE[level]).max(axis=2)
+            noise = _bayer(*rgb.shape[:2])[:, :, None] * 128
+            q = np.clip(rgb + noise, 0, 255).astype(np.uint8) >> 3
+            level = np.where(error > 40, lut[q[:, :, 0], q[:, :, 1], q[:, :, 2]], level)
+        return (level[:, 0::2] | (level[:, 1::2] << 4)).ravel()
+
+
 class Mono(ColorMode):
     """Black and white at 1 bit per pixel: an eighth of the data."""
 
-    name, bpp = "2", 1
+    name, label, bpp = "2", "bw", 1
 
     def palette_rgb(self):
         return np.array([[0, 0, 0], [255, 255, 255]], dtype=np.uint8)
@@ -203,5 +247,5 @@ def half_mode(mode):
     return Half()
 
 
-MODES = {mode.name: mode for mode in (Colour256(), Grey16(), Mono())}
-MODE_ORDER = ["256", "16", "2"]
+MODES = {mode.name: mode for mode in (Colour256(), Colour16(), Grey16(), Mono())}
+MODE_ORDER = ["256", "16c", "16", "2"]

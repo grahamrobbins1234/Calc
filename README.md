@@ -73,7 +73,7 @@ a different order, or unplug and replug, both sides reconnect on their own.
 | `--displays` | print what the system reports about the displays, for troubleshooting |
 | `--fps N` | frame rate cap (default 20) |
 | `--view-only` | show the screen but ignore the calculator's keys |
-| `--colors N` | starting colour mode: `256` (default), `16` greys or `2` (black and white) |
+| `--colors N` | starting colour mode: `256` (default), `16c` (16 colours), `16` (16 greys) or `2` (black and white) |
 | `--video MODE` | half-resolution video mode: `auto` (default), `on` or `off` |
 | `--dither` | dithered colours: smoother gradients, more data per frame |
 | `--no-lz4` | do not LZ4-compress the stream (if the calculator turns out faster without) |
@@ -109,9 +109,11 @@ for about half a second it sends the full-detail picture again. Text is not
 readable while it is active, which is why it is automatic. `[2nd]`+`[del]`
 forces it on or off.
 
-If updates feel slow, drop the colour depth with `[2nd]`+`[clear]`: 16 greys
-sends half the data of 256 colours and black-and-white an eighth, and text
-stays readable in both.
+If updates feel slow, drop the colour depth with `[2nd]`+`[clear]`: 16
+colours or 16 greys send half the data of 256 colours, and black-and-white
+an eighth. Text stays readable in all of them. The 16-colour palette is
+coarse, so photos and games band into flat patches; `--dither` smooths that
+at the cost of some of the saving.
 
 | Calculator key | Action |
 | --- | --- |
@@ -121,7 +123,7 @@ stays readable in both.
 | `[sto→]` | Middle mouse button |
 | `[trace]` / `[graph]` | Scroll up / down |
 | `[zoom]` | Zoom in; `[2nd]`+`[zoom]` zooms out |
-| `[2nd]`+`[clear]` | Cycle colour mode: 256 colours → 16 greys → black and white |
+| `[2nd]`+`[clear]` | Cycle colour mode: 256 colours → 16 colours → 16 greys → black and white |
 | `[2nd]`+`[del]` | Cycle video mode: auto → always on → off |
 | `[mode]` | Switch the arrows between mouse movement and the arrow keys |
 | `[alpha]` | Toggle the letter layer (the green letters above the keys) |

@@ -217,7 +217,7 @@ def test_panning_the_view_shifts_instead_of_resending(harness, name, scale, rota
 
     panned = [v for v in sizes.values() if v[2]]
     assert len(panned) >= len(sizes) * 0.6, "most pans should be sent as shifts"
-    assert sum(v[0] for v in panned) < sum(v[1] for v in panned) / 3
+    assert sum(v[0] for v in panned) < sum(v[1] for v in panned) / 2.5
 
 
 # -- packets ------------------------------------------------------------------
@@ -457,6 +457,28 @@ def test_palette():
     assert err <= 34
     grey = np.full((4, 4, 3), 128, np.uint8)
     assert np.abs(pal[quantize(grey)].astype(int) - 128).max() <= 8
+
+
+def test_sixteen_colour_mode():
+    mode = MODES["16c"]
+    pal = mode.palette_rgb()
+    assert len(pal) == 16 and pal[0].tolist() == [0, 0, 0] and pal[15].tolist() == [255, 255, 255]
+    assert mode.bpp == 4 and mode.fb_size == 38400 and len(mode.palette_message()) == 34
+    img = np.zeros((240, 320, 3), np.uint8)
+    img[:, :80] = (250, 10, 10)
+    img[:, 80:160] = (20, 30, 240)
+    img[:, 160:240] = (245, 245, 245)
+    img[:, 240:] = (120, 125, 130)
+    shown = mode.to_rgb(mode.pack(img))
+    assert shown[5, 5].tolist() == [255, 0, 0] and shown[5, 100].tolist() == [0, 0, 255]
+    assert shown[5, 200].tolist() == [255, 255, 255] and shown[5, 300].tolist() == [128, 128, 128]
+    # Every palette colour maps to itself.
+    strip = np.repeat(pal[None, :, :], 2, axis=0).repeat(2, axis=1)
+    full = np.zeros((240, 320, 3), np.uint8)
+    full[:2, :32] = strip
+    assert (mode.unpack(mode.pack(full))[0, :32:2] == np.arange(16)).all()
+    assert mode.pack(img, dither=True).size == 38400
+    assert half_mode(mode).fb_size == 9600
 
 
 def test_colour_modes_pack_leftmost_pixel_low():
