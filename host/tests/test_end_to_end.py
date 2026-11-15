@@ -118,8 +118,8 @@ def test_stream_and_input(stack):
     assert wait_for(lambda: viewport.level == 1)
     assert wait_for(lambda: calc.frames > frames + 1 and in_sync(calc, session))
 
-    # [2nd]+[clear] cycles the colour mode: 16 colours, 16 greys, then black and white.
-    for bpp, label in ((4, "16c"), (4, "16g"), (1, "bw")):
+    # [2nd]+[clear] cycles the colour mode: adaptive and fixed 16 colours, 16 greys, black and white.
+    for bpp, label in ((4, "16a"), (4, "16c"), (4, "16g"), (1, "bw")):
         calc.keys("2nd")
         calc.keys("2nd", "clear")
         calc.keys()

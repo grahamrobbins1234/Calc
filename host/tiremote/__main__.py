@@ -58,9 +58,10 @@ def parse_args(argv=None):
                         help="turn the picture clockwise by this many degrees, for holding "
                              "the calculator sideways; the arrow keys turn with it")
     parser.add_argument("--fps", type=float, default=20, help="maximum frames per second")
-    parser.add_argument("--colors", choices=["256", "16c", "16", "2"], default="256",
-                        help="starting colour mode: 256 colours, 16c = 16 colours or 16 = 16 "
-                             "greys (both half the data), 2 = black and white (an eighth); "
+    parser.add_argument("--colors", choices=["256", "16a", "16c", "16", "2"], default="256",
+                        help="starting colour mode: 256 colours; 16a = 16 colours chosen from "
+                             "the picture (for games), 16c = 16 fixed colours, 16 = 16 greys "
+                             "(all half the data); 2 = black and white (an eighth); "
                              "[2nd]+[clear] cycles it")
     parser.add_argument("--video", choices=["auto", "half", "quarter", "off", "on"],
                         default="auto",

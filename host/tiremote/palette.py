@@ -214,11 +214,107 @@ class Colour16(Grey16):
         if dither:
             # Only where the palette is a poor match, so flat areas that are
             # already (nearly) a palette colour, like white pages, stay clean.
-            error = np.abs(rgb.astype(np.int16) - self._PALETTE[level]).max(axis=2)
+            error = np.abs(rgb.astype(np.int16) - self.palette_rgb()[level]).max(axis=2)
             noise = _bayer(*rgb.shape[:2])[:, :, None] * 128
             q = np.clip(rgb + noise, 0, 255).astype(np.uint8) >> 3
             level = np.where(error > 40, lut[q[:, :, 0], q[:, :, 1], q[:, :, 2]], level)
         return (level[:, 0::2] | (level[:, 1::2] << 4)).ravel()
+
+
+class Adaptive16(Colour16):
+    """16 colours chosen from what is on screen, at 4 bits per pixel.
+
+    Made for games with a limited, flat-shaded look (it was tuned on
+    PolyTrack): half the data of 256 colours, and because the 16 colours are
+    the picture's own, large areas come out as flat runs that compress well
+    without looking wrong. The palette is re-chosen when the scene changes
+    enough that it no longer fits, which costs one full refresh.
+    """
+
+    name, label = "16a", "16a"
+    adaptive = True
+
+    REFIT_MIN_INTERVAL = 1.5  # seconds between checks
+    REFIT_RATIO = 1.5  # a fresh palette must beat the current one by this much
+
+    def __init__(self):
+        # Shared by the full-size and low-resolution versions of this mode.
+        self.state = {"palette": Colour16._PALETTE, "lut": None, "when": -1e9}
+
+    def palette_rgb(self):
+        return self.state["palette"]
+
+    def _nearest(self):
+        return self.state["lut"]
+
+    @staticmethod
+    def _build_lut(palette):
+        steps = (np.arange(32) * 255 // 31).astype(np.int32)
+        grid = np.stack(np.meshgrid(steps, steps, steps, indexing="ij"), axis=-1)
+        diff = grid[:, :, :, None, :] - palette.astype(np.int32)[None, None, None]
+        return (diff ** 2 * np.array([3, 6, 2])).sum(axis=-1).argmin(axis=-1).astype(np.uint8)
+
+    def _error(self, sample):
+        q = sample >> 3
+        index = self.state["lut"][q[:, :, 0], q[:, :, 1], q[:, :, 2]]
+        return float(np.abs(sample.astype(np.int16) - self.state["palette"][index]).mean())
+
+    @staticmethod
+    def _choose(pixels):
+        """16 colours for these pixels. Starts from colours that are as
+        different from each other as possible, so small but distinct things
+        (a red kerb, a white line) get a colour of their own instead of
+        sixteen shades of the sky, then settles each onto the average of the
+        pixels nearest to it."""
+        weights = np.array([3.0, 6.0, 2.0], dtype=np.float32) ** 0.5
+        points = pixels[:: max(1, len(pixels) // 6000)] * weights
+        centres = [points.mean(axis=0)]
+        distance = ((points - centres[0]) ** 2).sum(axis=1)
+        for _ in range(15):
+            centres.append(points[int(distance.argmax())])
+            distance = np.minimum(distance, ((points - centres[-1]) ** 2).sum(axis=1))
+        centres = np.array(centres)
+        for _ in range(6):
+            nearest = ((points[:, None, :] - centres[None]) ** 2).sum(axis=2).argmin(axis=1)
+            for k in range(16):
+                members = points[nearest == k]
+                if len(members):
+                    centres[k] = members.mean(axis=0)
+        return np.clip(np.round(centres / weights), 0, 255).astype(np.uint8)
+
+    def _adopt(self, colours, sample, now):
+        # Darkest first and brightest last: the calculator draws its pointer
+        # outline with colour 0 and its fill with colour 15.
+        luma = colours.astype(np.int32) @ np.array([77, 150, 29])
+        colours = colours[np.argsort(luma, kind="stable")]
+        self.state.update(palette=colours, lut=self._build_lut(colours), when=now)
+
+    def refit(self, rgb, now, force=False):
+        """Re-choose the palette from `rgb` if a fresh choice would fit the
+        picture clearly better than the current one. Returns True if the
+        palette changed (the screen must then be resent)."""
+        state = self.state
+        sample = np.ascontiguousarray(rgb[::2, ::2])
+        if state["lut"] is None or force:
+            self._adopt(self._choose(sample.reshape(-1, 3).astype(np.float32)), sample, now)
+            return True
+        if now - state["when"] < self.REFIT_MIN_INTERVAL:
+            return False
+        state["when"] = now  # whatever happens, do not look again for a while
+        current = self._error(sample)
+        if current < 2:
+            return False  # already as good as it gets
+        old = (state["palette"], state["lut"])
+        self._adopt(self._choose(sample.reshape(-1, 3).astype(np.float32)), sample, now)
+        if current > self._error(sample) * self.REFIT_RATIO + 2:
+            return True
+        state["palette"], state["lut"] = old  # not worth a full refresh
+        return False
+
+    def pack(self, rgb, dither=False):
+        if self.state["lut"] is None:
+            self.refit(rgb, 0.0, force=True)
+        return super().pack(rgb, dither)
 
 
 class Mono(ColorMode):
@@ -275,7 +371,10 @@ def scaled_mode(mode, shift):
                 return base.pack_indices(index)
 
         Scaled.shift = shift
-        _scaled[base.name, shift] = Scaled()
+        scaled = Scaled()
+        if hasattr(base, "state"):
+            scaled.state = base.state  # one palette for every size of the mode
+        _scaled[base.name, shift] = scaled
     return _scaled[base.name, shift]
 
 
@@ -283,5 +382,5 @@ def half_mode(mode):
     return scaled_mode(mode, 1)
 
 
-MODES = {mode.name: mode for mode in (Colour256(), Colour16(), Grey16(), Mono())}
-MODE_ORDER = ["256", "16c", "16", "2"]
+MODES = {mode.name: mode for mode in (Colour256(), Adaptive16(), Colour16(), Grey16(), Mono())}
+MODE_ORDER = ["256", "16a", "16c", "16", "2"]

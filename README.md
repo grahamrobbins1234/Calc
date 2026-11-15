@@ -77,7 +77,7 @@ a different order, or unplug and replug, both sides reconnect on their own.
 | `--displays` | print what the system reports about the displays, for troubleshooting |
 | `--fps N` | frame rate cap (default 20) |
 | `--view-only` | show the screen but ignore the calculator's keys |
-| `--colors N` | starting colour mode: `256` (default), `16c` (16 colours), `16` (16 greys) or `2` (black and white) |
+| `--colors N` | starting colour mode: `256` (default), `16a` (16 colours picked from the picture, for games), `16c` (16 fixed colours), `16` (16 greys) or `2` (black and white) |
 | `--video MODE` | low-resolution video mode: `auto` (default), `half`, `quarter` or `off` |
 | `--video-fps N` | in automatic video mode, step down to quarter size below this frame rate (default 8) |
 | `--dither` | dithered colours: smoother gradients, more data per frame |
@@ -124,6 +124,14 @@ with the sharp one once things settle for about half a second:
 Text is not readable while it is active, which is why it is automatic.
 `[2nd]`+`[del]` cycles auto → always half → always quarter → off.
 
+**Game colours (`16a`)** is a 16-colour mode that picks its colours from
+what is on screen, tuned on the flat-shaded racing game PolyTrack. It sends
+half the data of 256 colours, and because the 16 colours are the game's own,
+large areas come out as flat patches that compress well: about 37% less
+data than 256 colours on captured PolyTrack footage. When the scene's
+colours change (a different track or a menu) it picks new ones, which shows
+as one full redraw. Use `--colors 16a`, ideally with video mode left on auto.
+
 If updates feel slow, drop the colour depth with `[2nd]`+`[clear]`: 16
 colours or 16 greys send half the data of 256 colours, and black-and-white
 an eighth. Text stays readable in all of them. The 16-colour palette is
@@ -138,7 +146,7 @@ at the cost of some of the saving.
 | `[sto→]` | Middle mouse button |
 | `[trace]` / `[graph]` | Scroll up / down |
 | `[zoom]` | Zoom in; `[2nd]`+`[zoom]` zooms out |
-| `[2nd]`+`[clear]` | Cycle colour mode: 256 colours → 16 colours → 16 greys → black and white |
+| `[2nd]`+`[clear]` | Cycle colour mode: 256 colours → 16 adaptive → 16 fixed → 16 greys → black and white |
 | `[2nd]`+`[del]` | Cycle video mode: auto → half size → quarter size → off |
 | `[mode]` | Switch the arrows between mouse movement and the arrow keys |
 | `[alpha]` | Toggle the letter layer (the green letters above the keys) |

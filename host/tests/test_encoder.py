@@ -581,6 +581,45 @@ def test_sixteen_colour_mode():
     assert half_mode(mode).fb_size == 9600
 
 
+def test_adaptive_sixteen_colour_mode():
+    from tiremote.palette import Adaptive16
+
+    mode = Adaptive16()
+    # A "game" picture: big flat areas, a gradient sky, and thin bright details.
+    img = np.zeros((240, 320, 3), np.uint8)
+    img[:120] = np.linspace((90, 170, 250), (150, 210, 250), 120)[:, None, :]  # sky
+    img[120:] = (70, 140, 100)  # hills
+    img[160:] = (95, 110, 130)  # track
+    img[158:160] = (250, 10, 10)  # a thin red kerb
+    img[200:204, 100:220] = (255, 255, 255)  # a white line
+    assert mode.refit(img, now=0.0, force=True)
+    pal = mode.palette_rgb().astype(int)
+    assert len(pal) == 16
+    luma = pal @ np.array([77, 150, 29])
+    assert luma[0] == luma.min() and luma[15] == luma.max(), "pointer colours: dark 0, bright 15"
+    shown = mode.to_rgb(mode.pack(img)).astype(int)
+    # Small but distinct details keep their own colour.
+    assert np.abs(shown[159, 50] - (250, 10, 10)).max() < 30
+    assert np.abs(shown[201, 150] - (255, 255, 255)).max() < 30
+    assert np.abs(shown[130, 50] - (70, 140, 100)).max() < 30
+    assert np.abs(shown.astype(int) - img).mean() < 8
+
+    # The palette is kept while it still fits, and re-chosen when the scene changes.
+    assert not mode.refit(img, now=10.0)
+    night = (img // 4 + np.array([40, 0, 60])).astype(np.uint8)
+    assert not mode.refit(night, now=10.5), "not more often than the minimum interval"
+    assert mode.refit(night, now=20.0)
+    assert not mode.refit(night, now=30.0), "a palette that fits is kept"
+    assert np.abs(mode.to_rgb(mode.pack(night)).astype(int) - night).mean() < 8
+
+    # Every size of the mode shares one palette; flat pictures give long runs.
+    registered = MODES["16a"]
+    registered.refit(img, now=0.0, force=True)
+    small = scaled_mode(registered, 1)
+    assert small.palette_rgb() is registered.palette_rgb() and small.fb_size == 9600
+    assert (small.to_rgb(small.pack(img))[130, 50] == (70, 140, 100)).all()
+
+
 def test_colour_modes_pack_leftmost_pixel_low():
     img = np.zeros((240, 320, 3), np.uint8)
     img[0, 0] = 255  # only the top-left pixel is white

@@ -95,7 +95,26 @@ Run something where the whole picture keeps changing, for 20 seconds or more.
   - starting with `--video-fps 12` (steps down to quarter size sooner) or
     `--video-fps 4` (stays at half size longer)
 
-### D. Link speed: new compression
+### D. Game colour mode (works with the known-good calculator program)
+
+This one is a host-only change, so it can be tried right now with the
+known-good calculator program.
+
+```sh
+python -m tiremote --stats --colors 16a
+```
+
+Open PolyTrack and drive.
+
+- **Expect:** the game keeps its look (blue sky, green hills, grey track,
+  red and white kerbs) with visibly banded sky, and a higher frame rate than
+  256 colours. Changing track or opening a menu may cause one full redraw
+  as new colours are picked.
+- **Report:** `--stats` lines with `--colors 16a` and with the default 256
+  colours, and whether the colours ever look wrong for more than a couple
+  of seconds.
+
+### E. Link speed: new compression
 
 This only shows up in the numbers. Do the same activity twice, for
 example scrolling a web page up and down for 20 seconds while zoomed in:
@@ -126,4 +145,4 @@ The short version, if you only have a minute:
 1. Stats lines from normal desktop use.
 2. Stats lines from a game, saying whether it was half or quarter size.
 3. Stats lines with and without `--no-history`.
-4. Anything from sections A–C that didn't behave as described.
+4. Anything from sections A–D that didn't behave as described.

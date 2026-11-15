@@ -190,3 +190,47 @@ def test_video_mode_can_be_forced_and_cycled():
         assert calc.error is None
     finally:
         finish()
+
+
+def _flat_picture(colours):
+    """A 640x480 picture of vertical bands in the given colours."""
+    bands = np.repeat(np.array(colours, dtype=np.uint8)[None, :, :], 480, axis=0)
+    return Image.fromarray(np.repeat(bands, 640 // len(colours), axis=1))
+
+
+def test_adaptive_palette_follows_the_scene():
+    """16a: when the picture's colours change, the calculator gets a new
+    palette and a full refresh, and stays exact."""
+    from tiremote.palette import MODES
+
+    screen, session, calc, finish = start("off")
+    try:
+        day = [(90, 170, 250), (70, 140, 100), (95, 110, 130), (250, 10, 10),
+               (255, 255, 255), (10, 10, 10), (250, 140, 0), (240, 240, 20)]
+        screen._still = _flat_picture(day)
+        session._wanted_mode = MODES["16a"]
+        calc.hello()
+        assert wait_for(lambda: calc.bpp == 4 and in_sync(calc, session))
+        first_palette = calc.palette
+        assert len(first_palette) == 32
+
+        def shows(colours):
+            if not in_sync(calc, session):
+                return False
+            picture = session.mode.to_rgb(calc.fb).astype(int)
+            return all(np.abs(picture[100, 20 + 40 * i] - colour).max() < 12
+                       for i, colour in enumerate(colours))
+
+        assert wait_for(lambda: shows(day))
+
+        # A scene in completely different colours: new ones are chosen.
+        night = [(20, 10, 60), (130, 60, 160), (60, 200, 190), (200, 180, 120),
+                 (40, 80, 30), (160, 20, 90), (100, 100, 220), (230, 120, 170)]
+        screen._still = _flat_picture(night)
+        assert wait_for(lambda: calc.palette != first_palette and shows(night), timeout=6)
+        changes = calc.mode_changes
+        time.sleep(1.0)
+        assert calc.mode_changes == changes, "a still picture must keep its palette"
+        assert calc.error is None
+    finally:
+        finish()

@@ -68,6 +68,7 @@ class Session:
         self._recent = collections.deque()  # when the last second's frames were sent
         self._remembered = (1, -REMEMBER)  # (level, when) automatic mode last left video mode
         self._announce = True  # the next frame must be preceded by the mode
+        self._repaletted = False  # the colours changed: everything must be resent
         self._streaming = False  # a HELLO has been answered
         self._cursor_sent = None
         self._events = queue.Queue()
@@ -214,6 +215,9 @@ class Session:
         status = "%s  %s  video:%s" % (self.mapper.status(), self.mode.label, self.video)
         # A small picture does not need the slow, sharp downscaling filter.
         rgb = self.renderer.render(self._pointer(), status, fast=self.mode.half)
+        # A mode that picks its colours from the picture may need new ones.
+        if getattr(self.mode, "adaptive", False) and self.mode.refit(rgb, time.monotonic()):
+            self._repaletted = True
         return self.mode.pack(rgb, self.dither)
 
     def _pan(self, mapping):
@@ -302,6 +306,10 @@ class Session:
 
                 frame = self._render()
                 mapping = self.renderer.mapping
+                if self._repaletted:
+                    self._repaletted = False
+                    self.shown = None
+                    self._announce = True
                 fresh = self.shown is None
                 if (not fresh and not self._announce and np.array_equal(frame, self.shown)
                         and time.monotonic() - last_sent < KEEPALIVE):
