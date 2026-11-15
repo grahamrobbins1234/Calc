@@ -620,6 +620,39 @@ def test_adaptive_sixteen_colour_mode():
     assert (small.to_rgb(small.pack(img))[130, 50] == (70, 140, 100)).all()
 
 
+def test_adaptive_mode_with_fewer_colours():
+    from tiremote.palette import Adaptive16
+
+    # Smooth gradients: the fewer colours, the fewer and longer the bands.
+    ramp = np.linspace(0, 255, 320).astype(np.uint8)
+    img = np.zeros((240, 320, 3), np.uint8)
+    img[:100] = np.stack([ramp, ramp[::-1], np.full(320, 250, np.uint8)], axis=1)
+    img[100:180] = (95, 110, 130)
+    img[180:] = np.stack([ramp // 2, ramp, ramp // 3], axis=1)
+    sizes = {}
+    for count in (16, 6, 2):
+        mode = Adaptive16()
+        mode.colours = count
+        assert mode.label == "%da" % count
+        fb = mode.pack(img)
+        used = np.unique(mode.unpack(fb))
+        assert len(used) <= count
+        pal = mode.palette_rgb().astype(int)
+        luma = pal @ np.array([77, 150, 29])
+        assert len(pal) == 16 and luma[0] == luma.min() and luma[15] == luma.max()
+        assert len(mode.palette_message()) == 34  # still a 16-entry palette on the wire
+        sizes[count] = len(encode_frame(fb))
+    assert sizes[2] < sizes[6] < sizes[16]
+
+    # Changing the count on the registered mode reaches its low-resolution versions too.
+    registered = MODES["16a"]
+    registered.colours = 6
+    small = scaled_mode(registered, 1)
+    assert small.colours == 6 and small.label == "6a"
+    assert len(np.unique(small.unpack(small.pack(img)))) <= 6
+    registered.colours = 16
+
+
 def test_colour_modes_pack_leftmost_pixel_low():
     img = np.zeros((240, 320, 3), np.uint8)
     img[0, 0] = 255  # only the top-left pixel is white

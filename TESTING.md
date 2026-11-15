@@ -102,9 +102,11 @@ known-good calculator program.
 
 ```sh
 python -m tiremote --stats --colors 16a
+python -m tiremote --stats --colors 16a --game-colors 6
 ```
 
-Open PolyTrack and drive.
+Open PolyTrack and drive. The second command limits the mode to six colours
+(the status line shows `6a`): flatter and plainer, but less data still.
 
 - **Expect:** the game keeps its look (blue sky, green hills, grey track,
   red and white kerbs) with visibly banded sky, and a higher frame rate than

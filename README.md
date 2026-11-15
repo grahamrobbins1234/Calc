@@ -78,6 +78,7 @@ a different order, or unplug and replug, both sides reconnect on their own.
 | `--fps N` | frame rate cap (default 20) |
 | `--view-only` | show the screen but ignore the calculator's keys |
 | `--colors N` | starting colour mode: `256` (default), `16a` (16 colours picked from the picture, for games), `16c` (16 fixed colours), `16` (16 greys) or `2` (black and white) |
+| `--game-colors N` | how many colours the `16a` mode picks, 2–16 (default 16); fewer means a flatter picture and less data |
 | `--video MODE` | low-resolution video mode: `auto` (default), `half`, `quarter` or `off` |
 | `--video-fps N` | in automatic video mode, step down to quarter size below this frame rate (default 8) |
 | `--dither` | dithered colours: smoother gradients, more data per frame |
@@ -131,6 +132,8 @@ large areas come out as flat patches that compress well: about 37% less
 data than 256 colours on captured PolyTrack footage. When the scene's
 colours change (a different track or a menu) it picks new ones, which shows
 as one full redraw. Use `--colors 16a`, ideally with video mode left on auto.
+`--game-colors 6` cuts it to six colours: the sky becomes one flat blue and
+fine shading disappears, in exchange for much less data again.
 
 If updates feel slow, drop the colour depth with `[2nd]`+`[clear]`: 16
 colours or 16 greys send half the data of 256 colours, and black-and-white

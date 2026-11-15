@@ -63,6 +63,9 @@ def parse_args(argv=None):
                              "the picture (for games), 16c = 16 fixed colours, 16 = 16 greys "
                              "(all half the data); 2 = black and white (an eighth); "
                              "[2nd]+[clear] cycles it")
+    parser.add_argument("--game-colors", type=int, default=16, metavar="N",
+                        help="how many colours the 16a mode picks, 2 to 16 (default 16); "
+                             "fewer gives a flatter picture and less data")
     parser.add_argument("--video", choices=["auto", "half", "quarter", "off", "on"],
                         default="auto",
                         help="low-resolution video mode for games and video: auto = only "
@@ -114,6 +117,10 @@ def main(argv=None):
 
     from .capture import MssGrabber
     from .palette import MODES
+
+    if not 2 <= args.game_colors <= 16:
+        sys.exit("--game-colors must be between 2 and 16")
+    MODES["16a"].colours = args.game_colors
     from .session import Session
 
     size = None

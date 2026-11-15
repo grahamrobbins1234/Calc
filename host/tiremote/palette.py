@@ -231,15 +231,29 @@ class Adaptive16(Colour16):
     enough that it no longer fits, which costs one full refresh.
     """
 
-    name, label = "16a", "16a"
+    name = "16a"
     adaptive = True
+
+    @property
+    def colours(self):
+        """How many colours to pick, 2..16; fewer = flatter picture, less data."""
+        return self.state["colours"]
+
+    @colours.setter
+    def colours(self, count):
+        self.state["colours"] = count
+        self.state["lut"] = None  # choose again with the new count
+
+    @property
+    def label(self):
+        return "%da" % self.colours
 
     REFIT_MIN_INTERVAL = 1.5  # seconds between checks
     REFIT_RATIO = 1.5  # a fresh palette must beat the current one by this much
 
     def __init__(self):
         # Shared by the full-size and low-resolution versions of this mode.
-        self.state = {"palette": Colour16._PALETTE, "lut": None, "when": -1e9}
+        self.state = {"palette": Colour16._PALETTE, "lut": None, "when": -1e9, "colours": 16}
 
     def palette_rgb(self):
         return self.state["palette"]
@@ -259,9 +273,8 @@ class Adaptive16(Colour16):
         index = self.state["lut"][q[:, :, 0], q[:, :, 1], q[:, :, 2]]
         return float(np.abs(sample.astype(np.int16) - self.state["palette"][index]).mean())
 
-    @staticmethod
-    def _choose(pixels):
-        """16 colours for these pixels. Starts from colours that are as
+    def _choose(self, pixels):
+        """`self.colours` colours for these pixels. Starts from colours that are as
         different from each other as possible, so small but distinct things
         (a red kerb, a white line) get a colour of their own instead of
         sixteen shades of the sky, then settles each onto the average of the
@@ -270,13 +283,13 @@ class Adaptive16(Colour16):
         points = pixels[:: max(1, len(pixels) // 6000)] * weights
         centres = [points.mean(axis=0)]
         distance = ((points - centres[0]) ** 2).sum(axis=1)
-        for _ in range(15):
+        for _ in range(self.colours - 1):
             centres.append(points[int(distance.argmax())])
             distance = np.minimum(distance, ((points - centres[-1]) ** 2).sum(axis=1))
         centres = np.array(centres)
         for _ in range(6):
             nearest = ((points[:, None, :] - centres[None]) ** 2).sum(axis=2).argmin(axis=1)
-            for k in range(16):
+            for k in range(len(centres)):
                 members = points[nearest == k]
                 if len(members):
                     centres[k] = members.mean(axis=0)
@@ -287,6 +300,10 @@ class Adaptive16(Colour16):
         # outline with colour 0 and its fill with colour 15.
         luma = colours.astype(np.int32) @ np.array([77, 150, 29])
         colours = colours[np.argsort(luma, kind="stable")]
+        # With fewer than 16, the spare entries repeat the brightest one, which
+        # keeps it in the last slot. (Lookups pick the first of equal entries.)
+        spare = np.repeat(colours[-1:], 16 - len(colours), axis=0)
+        colours = np.concatenate([colours, spare])
         self.state.update(palette=colours, lut=self._build_lut(colours), when=now)
 
     def refit(self, rgb, now, force=False):
