@@ -178,12 +178,17 @@ def main(argv=None):
                 print("Waiting for the calculator: plug it in and run REMOTE "
                       "(prgmREMOTE, or via Cesium/arTIfiCE)...")
             return None
+        # Claim the port for ourselves. If two programs read it at once, each
+        # gets a random share of the calculator's bytes and both go wrong.
+        options = {"exclusive": True} if os.name == "posix" else {}
         try:
-            port = serial.Serial(port_name, 115200, timeout=0.2, write_timeout=2.0)
+            port = serial.Serial(port_name, 115200, timeout=0.2, write_timeout=2.0, **options)
             port.reset_input_buffer()
         except (serial.SerialException, OSError) as exc:
             if not quiet:
                 print("Cannot open %s: %s" % (port_name, exc))
+                print("Is another copy of this program still running, or TI Connect CE open? "
+                      "Only one program can use the calculator at a time.")
             return None
         return port, port_name
 
